@@ -119,7 +119,7 @@ master switch and dynamic filtering rules can be evaluated now properly even
 in the absence of a PageStore object, this was not the case before.
 
 Also, the TabContext object will try its best to find a good candidate root
-document URL for when none exists. This takes care of 
+document URL for when none exists. This takes care of
 <https://github.com/chrisaljoudi/uBlock/issues/1001>.
 
 The TabContext manager is self-contained, and it takes care to properly
@@ -526,7 +526,7 @@ vAPI.tabs.onClosed = function(tabId) {
 
 // https://github.com/gorhill/uBlock/issues/99
 // https://github.com/gorhill/uBlock/issues/991
-// 
+//
 // popup:
 //   Test/close target URL
 // popunder:
@@ -1055,6 +1055,14 @@ var pageStoreJanitor = function() {
 vAPI.setTimeout(pageStoreJanitor, pageStoreJanitorPeriod);
 
 /******************************************************************************/
+
+// Update existing tabs on load
+(function () {
+    var tabStack = vAPI.tabs.stack || {};
+    for(var tabId in tabStack) {
+        vAPI.tabs.onUpdated(tabId, { url: tabStack[tabId].url }, tabStack[tabId]);
+    }
+})();
 
 })();
 
