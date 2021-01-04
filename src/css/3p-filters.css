@@ -1,188 +1,210 @@
-ul {
-    padding: 0;
-    list-style-type: none;
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
     }
-#options li {
-    margin-bottom: 0.5em;
+body {
+    margin-bottom: 6rem;
+    }
+#actions {
+    background-color: var(--default-surface);
+    padding: var(--default-gap-small) 0 var(--default-gap-xsmall) 0;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    }
+#buttonUpdate.active {
+    pointer-events: none;
+    }
+#buttonUpdate.active .fa-icon svg {
+    animation: spin 1s linear infinite;
+    transform-origin: 50%;
+    }
+#listsOfBlockedHostsPrompt {
+    cursor: pointer;
     }
 #lists {
     margin: 0.5em 0 0 0;
-    padding-left: 1em;
-    padding-right: 0em;
-    }
-body[dir=rtl] #lists {
-    padding-left: 0em;
-    padding-right: 1em;
-    }
-#lists > li {
-    margin: 0.5em 0 0 0;
     padding: 0;
-    list-style-type: none;
     }
-#lists > .groupEntry > .geName {
+#listsOfBlockedHostsPrompt::before,
+.groupEntry:not([data-groupkey="user"]) .geDetails::before {
+    color: var(--fg-0-50);
+    content: '\2212';
+    font-family: monospace;
+    font-size: large;
+    margin-inline-end: 0.25em;
+    -webkit-margin-end: 0.25em;
+    }
+body.hideUnused #listsOfBlockedHostsPrompt::before,
+.groupEntry.hideUnused:not([data-groupkey="user"]) .geDetails::before {
+    content: '+';
+    }
+.groupEntry {
+    margin: 0.5em 0;
+    }
+.groupEntry .geDetails {
     cursor: pointer;
-    font-size: 110%;
     }
-#lists > .groupEntry > .geCount {
+.groupEntry .geName {
+    pointer-events: none;
+    }
+.groupEntry .geCount {
+    color: var(--fg-0-60);
     font-size: 90%;
+    pointer-events: none;
     }
-#lists > .groupEntry:not(:first-child) > .geName:before {
-    color: #aaa;
-    content: '\2212  ';
+.listEntries {
+    margin-inline-start: 0.6em;
+    -webkit-margin-start: 0.6em;
     }
-#lists > .groupEntry.collapsed > .geName:before {
-    color: #aaa;
-    content: '+  ';
-    }
-#lists > .groupEntry > ul {
-    margin: 0.25em 0 0 0;
-    }
-#lists > .groupEntry.collapsed > ul {
+.groupEntry:not([data-groupkey="user"]) .listEntry.unused {
     display: none;
     }
-li.listEntry {
-    margin: 0 auto 0 auto;
-    margin-left: 3em;
-    margin-right: 0em;
-    text-indent: -2em;
-    }
-body[dir=rtl] li.listEntry {
-    margin-left: 0em;
-    margin-right: 1em;
-    }
-li.listEntry > * {
-    text-indent: 0;
+.listEntry > * {
+    margin-left: 0;
+    margin-right: 0;
     unicode-bidi: embed;
     }
-li.listEntry > a:nth-of-type(2) {
-    font-size: 16px;
-    opacity: 0.7;
+.listEntry .listname {
+    white-space: nowrap;
     }
-li.listEntry > a:nth-of-type(2),
-li.listEntry > a:nth-of-type(2):visited {
-    color: mediumblue;
+.listEntry.toRemove .checkbox {
+    visibility: hidden;
     }
-li.listEntry > a:nth-of-type(2):hover {
-    opacity: 1;
+.listEntry.toRemove .listname {
+    text-decoration: line-through;
     }
-li.listEntry > a:nth-of-type(3) {
-    font-size: smaller;
-    opacity: 0.5;
-    }
-.dim {
-    opacity: 0.5;
-    }
-#buttonApply {
-    display: initial;
-    position: fixed;
-    right: 1em;
-    z-index: 10;
-    }
-body[dir=rtl] #buttonApply {
-    right: auto;
-    left: 1em;
-    }
-#buttonApply.disabled {
+.listEntry .fa-icon,
+.listEntry .counts {
+    color: var(--fg-0-50);
     display: none;
+    fill: var(--fg-0-50);
+    font-size: 120%;
+    margin: 0 0.2em 0 0;
     }
-span.status {
-    border: 1px solid transparent;
-    color: #444;
-    display: inline-block;
+.listEntry .fa-icon:hover {
+    color: inherit;
+    fill: inherit;
+    }
+.listEntry .content {
+    display: inline-flex;
+    }
+.listEntry a.towiki {
+    display: inline-flex;
+    }
+.listEntry.support a.support {
+    display: inline-flex;
+    }
+.listEntry .remove,
+.listEntry .unsecure,
+.listEntry .failed {
+    color: var(--fg-icon-info-lvl-4-dimmed);
+    cursor: pointer;
+    fill: var(--fg-icon-info-lvl-4-dimmed);
+    }
+.listEntry .remove:hover,
+.listEntry .unsecure:hover,
+.listEntry .failed:hover {
+    color: var(--fg-icon-info-lvl-4);
+    fill: var(--fg-icon-info-lvl-4);
+    }
+.listEntry.external .remove {
+    display: inline-flex;
+    }
+.listEntry.mustread a.mustread {
+    color: var(--fg-icon-info-lvl-1-dimmed);
+    display: inline-flex;
+    fill: var(--fg-icon-info-lvl-1-dimmed);
+    }
+.listEntry.mustread a.mustread:hover {
+    color: var(--fg-icon-info-lvl-1);
+    fill: var(--fg-icon-info-lvl-1);
+    }
+.listEntry .counts {
+    color: var(--fg-0-60);
     font-size: smaller;
-    line-height: 1;
-    margin: 0 0 0 0.5em;
-    opacity: 0.8;
-    padding: 1px 2px;
 }
-span.unsecure {
-    background-color: hsl(0, 100%, 88%);
-    border-color: hsl(0, 100%, 83%);
+.listEntry.checked .counts {
+    display: inline-block;
+}
+.listEntry .status {
+    cursor: default;
+    display: none;
+}
+.listEntry .status:hover {
+    color: inherit;
     }
-span.purge {
-    border-color: #ddd;
-    background-color: #eee;
+.listEntry.checked.unsecure .unsecure {
+    display: inline-flex;
+    }
+.listEntry.failed .failed {
+    display: inline-flex;
+    }
+.listEntry .cache {
     cursor: pointer;
     }
-span.purge:hover {
-    opacity: 1;
+.listEntry.checked.cached:not(.obsolete) .cache {
+    display: inline-flex;
     }
-span.obsolete,
-span.new {
-    background-color: hsl(36, 100%, 80%);
-    border-color: hsl(36, 100%, 75%);
+.listEntry .obsolete {
+    color: var(--info-lvl-2-ink);
+    fill: var(--info-lvl-2-ink);
     }
-#externalListsDiv {
-    margin: 2em auto 0 2em;
+.listEntry .obsolete:hover {
+    color: var(--info-lvl-2-ink-hover);
+    fill: var(--info-lvl-2-ink-hover);
     }
-body[dir=rtl] #externalListsDiv {
-    margin: 2em 2em 0;
+body:not(.updating) .listEntry.checked.obsolete .obsolete {
+    display: inline-flex;
     }
-#externalLists {
+.listEntry .updating {
+    transform-origin: 50%;
+    }
+body.updating .listEntry.checked.obsolete .updating {
+    animation: spin 1s steps(8) infinite;
+    display: inline-flex;
+    }
+.listEntry.toImport {
+    margin: 0.5em 0;
+    }
+.listEntry.toImport textarea {
+    border: 1px solid #ccc;
     box-sizing: border-box;
-    height: 10em;
+    display: block;
+    font-size: smaller;
+    height: 6em;
+    margin: 0;
+    resize: vertical;
+    visibility: hidden;
     white-space: pre;
     width: 100%;
-    word-wrap: normal;
     }
-body #busyOverlay {
-    background-color: transparent;
-    bottom: 0;
-    cursor: wait;
-    display: none;
-    left: 0;
-    position: fixed;
-    right: 0;
-    top: 0;
-    z-index: 1000;
+.listEntry.toImport.checked textarea {
+    visibility: visible;
     }
-body.busy #busyOverlay {
-    display: block;
+
+/* touch-screen devices */
+:root.mobile .listEntry .fa-icon {
+    font-size: 120%;
+    margin: 0 0.5em 0 0;
     }
-#busyOverlay > div:nth-of-type(1) {
-    background-color: white;
-    bottom: 0;
-    left: 0;
-    opacity: 0.75;
-    position: absolute;
-    right: 0;
-    top: 0;
+:root.mobile .listEntries {
+    margin-inline-start: 0;
+    -webkit-margin-start: 0;
     }
-#busyOverlay > div:nth-of-type(2) {
-    background-color: #eee;
-    border: 1px solid transparent;
-    border-color: #80b3ff #80b3ff hsl(216, 100%, 75%);
-    border-radius: 3px;
-    box-sizing: border-box;
-    height: 3em;
-    left: 10%;
-    position: absolute;
-    bottom: 75%;
-    width: 80%;
+:root.mobile .li.listEntry {
+    background-color: var(--bg-1);
+    overflow-x: auto;
     }
-#busyOverlay > div:nth-of-type(2) > div:nth-of-type(1) {
-    background-color: hsl(216, 100%, 75%);
-    background-image: linear-gradient(#a8cbff, #80b3ff);
-    background-repeat: repeat-x;
-    border: 0;
-    box-sizing: border-box;
-    color: #222;
-    height: 100%;
-    left: 0;
-    padding: 0;
-    position: absolute;
-    width: 25%;
+:root.mobile .li.listEntry label > span:not([class]) {
+    flex-grow: 1;
     }
-#busyOverlay > div:nth-of-type(2) > div:nth-of-type(2) {
-    background-color: transparent;
-    border: 0;
-    box-sizing: border-box;
-    height: 100%;
-    left: 0;
-    line-height: 3em;
-    overflow: hidden;
-    position: absolute;
-    text-align: center;
-    top: 0;
-    width: 100%;
+:root.mobile .li.listEntry .listname,
+:root.mobile .li.listEntry .iconbar {
+    align-items: flex-start;
+    display: flex;
+    white-space: nowrap;
+    }
+:root.mobile .li.listEntry .iconbar {
+    margin-top: 0.2em;
     }

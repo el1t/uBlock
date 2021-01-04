@@ -1,7 +1,7 @@
 /*******************************************************************************
 
     uBlock Origin - a browser extension to block requests.
-    Copyright (C) 2015-2016 Raymond Hill
+    Copyright (C) 2015-2018 Raymond Hill
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -23,32 +23,26 @@
 
 /******************************************************************************/
 
-(function() {
-    if ( typeof vAPI !== 'object' || !vAPI.domFilterer ) {
-        return;
-    }
+if ( typeof vAPI === 'object' && vAPI.domFilterer ) {
+    vAPI.domFilterer.toggle(true);
+}
 
-    // Insert all cosmetic filtering-related style tags in the DOM
 
-    var styles = vAPI.domFilterer.styleTags;
-    var i = styles.length, style;
-    while ( i-- ) {
-        style = styles[i];
-        if ( style.sheet !== null ) {
-            style.sheet.disabled = false;
-            style[vAPI.sessionId] = undefined;
-        }
-    }
 
-    var elems = [];
-    try {
-        elems = document.querySelectorAll('[' + vAPI.domFilterer.hiddenId + ']');
-    } catch (e) {
-    }
-    i = elems.length;
-    while ( i-- ) {
-        vAPI.domFilterer.unshowNode(elems[i]);
-    }
 
-    vAPI.domFilterer.toggleOn();
-})();
+
+
+
+
+/*******************************************************************************
+
+    DO NOT:
+    - Remove the following code
+    - Add code beyond the following code
+    Reason:
+    - https://github.com/gorhill/uBlock/pull/3721
+    - uBO never uses the return value from injected content scripts
+
+**/
+
+void 0;

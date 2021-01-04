@@ -1,0 +1,196 @@
+.codeMirrorContainer {
+    font-size: 12px;
+    line-height: 1.25;
+    overflow: hidden;
+    position: relative;
+    }
+.CodeMirror {
+    background-color: var(--default-surface);
+    box-sizing: border-box;
+    color: var(--default-ink);
+    flex-grow: 1;
+    height: 100%;
+    width: 100%;
+    }
+.CodeMirror-lines {
+    padding-bottom: 6rem;
+    }
+.CodeMirror-gutters {
+    background-color: var(--cm-gutter-surface);
+    border-color: var(--cm-gutter-border);
+    }
+.CodeMirror-linenumber {
+    color: var(--cm-gutter-ink);
+    }
+
+/* For when panels are used */
+.codeMirrorContainer > div:not([class^="CodeMirror"]) {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    }
+
+.codeMirrorContainer.codeMirrorBreakAll .CodeMirror-wrap pre {
+    word-break: break-all;
+    }
+
+/* CodeMirror theme overrides */
+.CodeMirror-focused .CodeMirror-selected {
+    background: var(--cm-selection-surface);
+    color: var(--cm-selection-ink);
+    }
+.CodeMirror-line::selection,
+.CodeMirror-line > span::selection,
+.CodeMirror-line > span > span::selection {
+    background: var(--cm-selection-surface);
+    color: var(--cm-selection-ink);
+    }
+
+.cm-s-default .cm-comment {
+    color: var(--sf-comment-ink);
+    }
+.cm-s-default .cm-def {
+    color: var(--sf-def-ink);
+    }
+.cm-s-default .cm-directive {
+    color: var(--sf-directive-ink);
+    font-weight: bold;
+    }
+.cm-s-default .cm-error {
+    color: inherit;
+    }
+.cm-s-default .cm-error,
+.CodeMirror-linebackground.error {
+    background-color: var(--sf-error-surface);
+    text-decoration: underline var(--sf-error-ink);
+    text-underline-position: under;
+    }
+.cm-s-default .cm-link {
+    text-decoration: none;
+    }
+.cm-s-default .cm-link:hover {
+    color: var(--link-ink);
+    }
+.cm-s-default .cm-keyword {
+    color: var(--sf-keyword-ink);
+    }
+.cm-s-default .cm-notice {
+    text-underline-position: under;
+    text-decoration-color: var(--sf-notice-ink);
+    text-decoration-style: solid;
+    text-decoration-line: underline;
+    }
+.cm-s-default .cm-tag {
+    color: var(--sf-tag-ink);
+    }
+.cm-s-default .cm-value { color: var(--sf-value-ink); }
+.cm-s-default .cm-variable {
+    color: var(--sf-variable-ink);
+    }
+.cm-s-default .cm-warning {
+    text-decoration: underline var(--sf-warning-ink);
+    text-underline-position: under;
+    }
+
+/* Rules */
+.cm-s-default .cm-allowrule {
+    color: var(--df-allow-ink);
+    font-weight: bold;
+    }
+.cm-s-default .cm-blockrule {
+    color: var(--df-block-ink);
+    font-weight: bold;
+    }
+.cm-s-default .cm-nooprule {
+    color: var(--df-noop-ink);
+    font-weight: bold;
+    }
+.cm-s-default .cm-sortkey {
+    color: var(--sf-keyword-ink);
+    }
+
+div.CodeMirror span.CodeMirror-matchingbracket {
+    color: unset;
+    }
+.CodeMirror-matchingbracket {
+    background-color: #afa;
+    color: inherit !important;
+    font-weight: bold;
+    }
+
+.cm-search-widget {
+    align-items: center;
+    background-color: var(--cm-gutter-surface);
+    border-bottom: 1px solid var(--cm-gutter-border);
+    cursor: default;
+    direction: ltr;
+    display: flex;
+    flex-shrink: 0;
+    justify-content: space-between;
+    padding: 0.5em;
+    user-select: none;
+      -moz-user-select: none;
+      -webkit-user-select: none;
+    z-index: 1000;
+    }
+.cm-search-widget-input {
+    display: inline-flex;
+    flex-grow: 1;
+    }
+.cm-search-widget .fa-icon {
+    fill: var(--cm-gutter-ink);
+    font-size: 140%;
+    }
+.cm-search-widget .fa-icon:not(.fa-icon-ro):hover {
+    fill: #000;
+    }
+.cm-search-widget-input input {
+    border: 1px solid var(--cm-gutter-ink);
+    display: inline-flex;
+    flex-grow: 1;
+    max-width: 16em;
+    }
+.cm-search-widget-count {
+    align-items: center;
+    display: inline-flex;
+    flex-grow: 0;
+    font-size: 95%;
+    min-width: 6em;
+    visibility: hidden;
+    }
+.cm-search-widget[data-query] .cm-search-widget-count:not(:empty) {
+    visibility: visible;
+    }
+.cm-search-widget .cm-search-widget-button:hover {
+    color: #000;
+    }
+.cm-search-widget .sourceURL[href=""] {
+    display: none;
+    }
+.cm-searching {
+    background-color: var(--cm-searching-surface) !important;
+    border: 1px dotted black;
+    }
+
+.CodeMirror-merge {
+    border-color: var(--cm-gutter-border);
+    }
+.CodeMirror-merge-l-deleted {
+    background-image: none;
+    }
+.CodeMirror-merge-l-inserted {
+    background-image: none;
+    }
+/* This probably needs to be added to CodeMirror repo */
+.CodeMirror-merge-gap {
+    background-color: var(--cm-gutter-surface);
+    border-color: var(--cm-gutter-border);
+    vertical-align: top;
+    }
+.CodeMirror-merge-spacer {
+    background-color: var(--cm-gutter-surface);
+    }
+
+.CodeMirror-hints {
+    z-index: 10000;
+    }

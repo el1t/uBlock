@@ -1,7 +1,7 @@
 /*******************************************************************************
 
     uBlock Origin - a browser extension to block requests.
-    Copyright (C) 2014-2016 Raymond Hill
+    Copyright (C) 2014-present Raymond Hill
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -24,29 +24,30 @@
 /******************************************************************************/
 /******************************************************************************/
 
-(function(){
+{
 
-/******************************************************************************/
+// *****************************************************************************
+// start of local namespace
 
 // https://github.com/chrisaljoudi/uBlock/issues/405
 // Be more flexible with whitelist syntax
 
 // Any special regexp char will be escaped
-var whitelistDirectiveEscape = /[-\/\\^$+?.()|[\]{}]/g;
+const whitelistDirectiveEscape = /[-\/\\^$+?.()|[\]{}]/g;
 
 // All `*` will be expanded into `.*`
-var whitelistDirectiveEscapeAsterisk = /\*/g;
+const whitelistDirectiveEscapeAsterisk = /\*/g;
 
 // Remember encountered regexps for reuse.
-var directiveToRegexpMap = new Map();
+const directiveToRegexpMap = new Map();
 
 // Probably manually entered whitelist directive
-var isHandcraftedWhitelistDirective = function(directive) {
+const isHandcraftedWhitelistDirective = function(directive) {
     return directive.startsWith('/') && directive.endsWith('/') ||
            directive.indexOf('/') !== -1 && directive.indexOf('*') !== -1;
 };
 
-var matchDirective = function(url, hostname, directive) {
+const matchDirective = function(url, hostname, directive) {
     // Directive is a plain hostname.
     if ( directive.indexOf('/') === -1 ) {
         return hostname.endsWith(directive) &&
@@ -54,13 +55,16 @@ var matchDirective = function(url, hostname, directive) {
                hostname.charAt(hostname.length - directive.length - 1) === '.');
     }
     // Match URL exactly.
-    if ( directive.startsWith('/') === false && directive.indexOf('*') === -1 ) {
+    if (
+        directive.startsWith('/') === false &&
+        directive.indexOf('*') === -1
+    ) {
         return url === directive;
     }
     // Transpose into a regular expression.
-    var re = directiveToRegexpMap.get(directive);
+    let re = directiveToRegexpMap.get(directive);
     if ( re === undefined ) {
-        var reStr;
+        let reStr;
         if ( directive.startsWith('/') && directive.endsWith('/') ) {
             reStr = directive.slice(1, -1);
         } else {
@@ -73,9 +77,9 @@ var matchDirective = function(url, hostname, directive) {
     return re.test(url);
 };
 
-var matchBucket = function(url, hostname, bucket, start) {
+const matchBucket = function(url, hostname, bucket, start) {
     if ( bucket ) {
-        for ( var i = start || 0, n = bucket.length; i < n; i++ ) {
+        for ( let i = start || 0, n = bucket.length; i < n; i++ ) {
             if ( matchDirective(url, hostname, bucket[i]) ) {
                 return i;
             }
@@ -84,23 +88,20 @@ var matchBucket = function(url, hostname, bucket, start) {
     return -1;
 };
 
-// https://www.youtube.com/watch?v=RL2W_XK-UJ4&list=PLhPp-QAUKF_hRMjWsYvvdazGw0qIjtSXJ
-
 /******************************************************************************/
 
 µBlock.getNetFilteringSwitch = function(url) {
-    var targetHostname = this.URI.hostnameFromURI(url),
-        key = targetHostname,
-        pos;
+    const hostname = this.URI.hostnameFromURI(url);
+    let key = hostname;
     for (;;) {
-        if ( matchBucket(url, targetHostname, this.netWhitelist[key]) !== -1 ) {
+        if ( matchBucket(url, hostname, this.netWhitelist.get(key)) !== -1 ) {
             return false;
         }
-        pos = key.indexOf('.');
+        const pos = key.indexOf('.');
         if ( pos === -1 ) { break; }
         key = key.slice(pos + 1);
     }
-    if ( matchBucket(url, targetHostname, this.netWhitelist['//']) !== -1 ) {
+    if ( matchBucket(url, hostname, this.netWhitelist.get('//')) !== -1 ) {
         return false;
     }
     return true;
@@ -109,7 +110,7 @@ var matchBucket = function(url, hostname, bucket, start) {
 /******************************************************************************/
 
 µBlock.toggleNetFilteringSwitch = function(url, scope, newState) {
-    var currentState = this.getNetFilteringSwitch(url);
+    const currentState = this.getNetFilteringSwitch(url);
     if ( newState === undefined ) {
         newState = !currentState;
     }
@@ -117,58 +118,59 @@ var matchBucket = function(url, hostname, bucket, start) {
         return currentState;
     }
 
-    var netWhitelist = this.netWhitelist,
-        pos = url.indexOf('#'),
-        targetURL = pos !== -1 ? url.slice(0, pos) : url,
-        targetHostname = this.URI.hostnameFromURI(targetURL),
-        key = targetHostname,
-        directive = scope === 'page' ? targetURL : targetHostname;
+    const netWhitelist = this.netWhitelist;
+    const pos = url.indexOf('#');
+    let targetURL = pos !== -1 ? url.slice(0, pos) : url;
+    const targetHostname = this.URI.hostnameFromURI(targetURL);
+    let key = targetHostname;
+    let directive = scope === 'page' ? targetURL : targetHostname;
 
     // Add to directive list
     if ( newState === false ) {
-        if ( netWhitelist[key] === undefined ) {
-            netWhitelist[key] = [];
+        let bucket = netWhitelist.get(key);
+        if ( bucket === undefined ) {
+            bucket = [];
+            netWhitelist.set(key, bucket);
         }
-        netWhitelist[key].push(directive);
+        bucket.push(directive);
         this.saveWhitelist();
         return true;
     }
 
-    // Remove from directive list whatever causes current URL to be whitelisted
-    var bucket, i;
+    // Remove all directives which cause current URL to be whitelisted
     for (;;) {
-        bucket = netWhitelist[key];
+        const bucket = netWhitelist.get(key);
         if ( bucket !== undefined ) {
-            i = undefined;
+            let i;
             for (;;) {
                 i = matchBucket(targetURL, targetHostname, bucket, i);
                 if ( i === -1 ) { break; }
                 directive = bucket.splice(i, 1)[0];
                 if ( isHandcraftedWhitelistDirective(directive) ) {
-                    netWhitelist['#'].push('# ' + directive);
+                    netWhitelist.get('#').push(`# ${directive}`);
                 }
             }
             if ( bucket.length === 0 ) {
-                delete netWhitelist[key];
+                netWhitelist.delete(key);
             }
         }
-        pos = key.indexOf('.');
+        const pos = key.indexOf('.');
         if ( pos === -1 ) { break; }
         key = key.slice(pos + 1);
     }
-    bucket = netWhitelist['//'];
+    const bucket = netWhitelist.get('//');
     if ( bucket !== undefined ) {
-        i = undefined;
+        let i;
         for (;;) {
             i = matchBucket(targetURL, targetHostname, bucket, i);
             if ( i === -1 ) { break; }
             directive = bucket.splice(i, 1)[0];
             if ( isHandcraftedWhitelistDirective(directive) ) {
-                netWhitelist['#'].push('# ' + directive);
+                netWhitelist.get('#').push(`# ${directive}`);
             }
         }
         if ( bucket.length === 0 ) {
-            delete netWhitelist['//'];
+            netWhitelist.delete('//');
         }
     }
     this.saveWhitelist();
@@ -177,41 +179,39 @@ var matchBucket = function(url, hostname, bucket, start) {
 
 /******************************************************************************/
 
-µBlock.stringFromWhitelist = function(whitelist) {
-    var r = {};
-    var i, bucket;
-    for ( var key in whitelist ) {
-        bucket = whitelist[key];
-        i = bucket.length;
-        while ( i-- ) {
-            r[bucket[i]] = true;
+µBlock.arrayFromWhitelist = function(whitelist) {
+    const out = new Set();
+    for ( const bucket of whitelist.values() ) {
+        for ( const directive of bucket ) {
+            out.add(directive);
         }
     }
-    return Object.keys(r).sort(function(a,b){return a.localeCompare(b);}).join('\n');
+    return Array.from(out).sort((a, b) => a.localeCompare(b));
+};
+
+µBlock.stringFromWhitelist = function(whitelist) {
+    return this.arrayFromWhitelist(whitelist).join('\n');
 };
 
 /******************************************************************************/
 
-µBlock.whitelistFromString = function(s) {
-    var whitelist = Object.create(null),
-        reInvalidHostname = /[^a-z0-9.\-\[\]:]/,
-        reHostnameExtractor = /([a-z0-9\[][a-z0-9.\-]*[a-z0-9\]])(?::[\d*]+)?\/(?:[^\x00-\x20\/]|$)[^\x00-\x20]*$/,
-        lines = s.split(/[\n\r]+/),
-        line, matches, key, directive, re;
+µBlock.whitelistFromArray = function(lines) {
+    const whitelist = new Map();
 
     // Comment bucket must always be ready to be used.
-    whitelist['#'] = [];
+    whitelist.set('#', []);
 
     // New set of directives, scrap cached data.
     directiveToRegexpMap.clear();
 
-    for ( var i = 0; i < lines.length; i++ ) {
-        line = lines[i].trim();
+    for ( let line of lines ) {
+        line = line.trim();
+
         // https://github.com/gorhill/uBlock/issues/171
         // Skip empty lines
-        if ( line === '' ) {
-            continue;
-        }
+        if ( line === '' ) { continue; }
+
+        let key, directive;
 
         // Don't throw out commented out lines: user might want to fix them
         if ( line.startsWith('#') ) {
@@ -220,7 +220,7 @@ var matchBucket = function(url, hostname, bucket, start) {
         }
         // Plain hostname
         else if ( line.indexOf('/') === -1 ) {
-            if ( reInvalidHostname.test(line) ) {
+            if ( this.reWhitelistBadHostname.test(line) ) {
                 key = '#';
                 directive = '# ' + line;
             } else {
@@ -228,11 +228,15 @@ var matchBucket = function(url, hostname, bucket, start) {
             }
         }
         // Regex-based (ensure it is valid)
-        else if ( line.startsWith('/') && line.endsWith('/') ) {
+        else if (
+            line.length > 2 &&
+            line.startsWith('/') &&
+            line.endsWith('/')
+        ) {
             key = '//';
             directive = line;
             try {
-                re = new RegExp(directive.slice(1, -1));
+                const re = new RegExp(directive.slice(1, -1));
                 directiveToRegexpMap.set(directive, re);
             } catch(ex) {
                 key = '#';
@@ -243,7 +247,7 @@ var matchBucket = function(url, hostname, bucket, start) {
         // label (or else it would be just impossible to make an efficient
         // dict.
         else {
-            matches = reHostnameExtractor.exec(line);
+            const matches = this.reWhitelistHostnameExtractor.exec(line);
             if ( !matches || matches.length !== 2 ) {
                 key = '#';
                 directive = '# ' + line;
@@ -259,36 +263,47 @@ var matchBucket = function(url, hostname, bucket, start) {
 
         // Be sure this stays fixed:
         // https://github.com/chrisaljoudi/uBlock/issues/185
-        if ( whitelist[key] === undefined ) {
-            whitelist[key] = [];
+        let bucket = whitelist.get(key);
+        if ( bucket === undefined ) {
+            bucket = [];
+            whitelist.set(key, bucket);
         }
-        whitelist[key].push(directive);
+        bucket.push(directive);
     }
     return whitelist;
 };
 
-/******************************************************************************/
+µBlock.whitelistFromString = function(s) {
+    return this.whitelistFromArray(s.split('\n'));
+};
 
-})();
+// https://github.com/gorhill/uBlock/issues/3717
+µBlock.reWhitelistBadHostname = /[^a-z0-9.\-_\[\]:]/;
+µBlock.reWhitelistHostnameExtractor = /([a-z0-9.\-_\[\]]+)(?::[\d*]+)?\/(?:[^\x00-\x20\/]|$)[^\x00-\x20]*$/;
+
+// end of local namespace
+// *****************************************************************************
+
+}
 
 /******************************************************************************/
 /******************************************************************************/
 
 µBlock.changeUserSettings = function(name, value) {
-    var us = this.userSettings;
+    let us = this.userSettings;
 
     // Return all settings if none specified.
     if ( name === undefined ) {
         us = JSON.parse(JSON.stringify(us));
-        us.noCosmeticFiltering = this.hnSwitches.evaluate('no-cosmetic-filtering', '*') === 1;
-        us.noLargeMedia = this.hnSwitches.evaluate('no-large-media', '*') === 1;
-        us.noRemoteFonts = this.hnSwitches.evaluate('no-remote-fonts', '*') === 1;
+        us.noCosmeticFiltering = this.sessionSwitches.evaluate('no-cosmetic-filtering', '*') === 1;
+        us.noLargeMedia = this.sessionSwitches.evaluate('no-large-media', '*') === 1;
+        us.noRemoteFonts = this.sessionSwitches.evaluate('no-remote-fonts', '*') === 1;
+        us.noScripting = this.sessionSwitches.evaluate('no-scripting', '*') === 1;
+        us.noCSPReports = this.sessionSwitches.evaluate('no-csp-reports', '*') === 1;
         return us;
     }
 
-    if ( typeof name !== 'string' || name === '' ) {
-        return;
-    }
+    if ( typeof name !== 'string' || name === '' ) { return; }
 
     if ( value === undefined ) {
         return us[name];
@@ -307,7 +322,7 @@ var matchBucket = function(url, hostname, bucket, start) {
     }
 
     // Change -- but only if the user setting actually exists.
-    var mustSave = us.hasOwnProperty(name) && value !== us[name];
+    let mustSave = us.hasOwnProperty(name) && value !== us[name];
     if ( mustSave ) {
         us[name] = value;
     }
@@ -316,8 +331,11 @@ var matchBucket = function(url, hostname, bucket, start) {
     switch ( name ) {
     case 'advancedUserEnabled':
         if ( value === true ) {
-            us.dynamicFilteringEnabled = true;
+            us.popupPanelSections |= 0b11111;
         }
+        break;
+    case 'autoUpdate':
+        this.scheduleAssetUpdater(value ? 7 * 60 * 1000 : 0);
         break;
     case 'collapseBlocked':
         if ( value === false ) {
@@ -333,17 +351,29 @@ var matchBucket = function(url, hostname, bucket, start) {
         }
         break;
     case 'noCosmeticFiltering':
-        if ( this.hnSwitches.toggle('no-cosmetic-filtering', '*', value ? 1 : 0) ) {
-            this.saveHostnameSwitches();
-        }
-        break;
     case 'noLargeMedia':
-        if ( this.hnSwitches.toggle('no-large-media', '*', value ? 1 : 0) ) {
-            this.saveHostnameSwitches();
-        }
-        break;
     case 'noRemoteFonts':
-        if ( this.hnSwitches.toggle('no-remote-fonts', '*', value ? 1 : 0) ) {
+    case 'noScripting':
+    case 'noCSPReports':
+        let switchName;
+        switch ( name ) {
+        case 'noCosmeticFiltering':
+            switchName = 'no-cosmetic-filtering'; break;
+        case 'noLargeMedia':
+            switchName = 'no-large-media'; break;
+        case 'noRemoteFonts':
+            switchName = 'no-remote-fonts'; break;
+        case 'noScripting':
+            switchName = 'no-scripting'; break;
+        case 'noCSPReports':
+            switchName = 'no-csp-reports'; break;
+        default:
+            break;
+        }
+        if ( switchName === undefined ) { break; }
+        let switchState = value ? 1 : 0;
+        this.sessionSwitches.toggle(switchName, '*', switchState);
+        if ( this.permanentSwitches.toggle(switchName, '*', switchState) ) {
             this.saveHostnameSwitches();
         }
         break;
@@ -368,15 +398,52 @@ var matchBucket = function(url, hostname, bucket, start) {
 
 /******************************************************************************/
 
-µBlock.elementPickerExec = function(tabId, targetElement) {
-    if ( vAPI.isBehindTheSceneTabId(tabId) ) {
-        return;
+// https://www.reddit.com/r/uBlockOrigin/comments/8524cf/my_custom_scriptlets_doesnt_work_what_am_i_doing/
+
+µBlock.changeHiddenSettings = function(hs) {
+    const mustReloadResources =
+        hs.userResourcesLocation !== this.hiddenSettings.userResourcesLocation;
+    this.hiddenSettings = hs;
+    this.saveHiddenSettings();
+    if ( mustReloadResources ) {
+        this.redirectEngine.invalidateResourcesSelfie();
+        this.loadRedirectResources();
     }
-    this.epickerTarget = targetElement || '';
-    this.scriptlets.inject(tabId, 'element-picker');
-    if ( typeof vAPI.tabs.select === 'function' ) {
-        vAPI.tabs.select(tabId);
+    this.fireDOMEvent('hiddenSettingsChanged');
+};
+
+/******************************************************************************/
+
+µBlock.elementPickerExec = async function(
+    tabId,
+    frameId,
+    targetElement,
+    zap = false,
+) {
+    if ( vAPI.isBehindTheSceneTabId(tabId) ) { return; }
+
+    this.epickerArgs.target = targetElement || '';
+    this.epickerArgs.zap = zap;
+
+    // https://github.com/uBlockOrigin/uBlock-issues/issues/40
+    //   The element picker needs this library
+    if ( zap !== true ) {
+        vAPI.tabs.executeScript(tabId, {
+            file: '/lib/diff/swatinem_diff.js',
+            runAt: 'document_end',
+        });
     }
+
+    await vAPI.tabs.executeScript(tabId, {
+        file: '/js/scriptlets/epicker.js',
+        frameId,
+        runAt: 'document_end',
+    });
+
+    // https://github.com/uBlockOrigin/uBlock-issues/issues/168
+    //   Force activate the target tab once the element picker has been
+    //   injected.
+    vAPI.tabs.select(tabId);
 };
 
 /******************************************************************************/
@@ -386,20 +453,39 @@ var matchBucket = function(url, hostname, bucket, start) {
 // (but not really) redundant rules led to this issue.
 
 µBlock.toggleFirewallRule = function(details) {
-    var requestType = details.requestType;
+    let { srcHostname, desHostname, requestType, action } = details;
 
-    if ( details.action !== 0 ) {
-        this.sessionFirewall.setCell(details.srcHostname, details.desHostname, requestType, details.action);
+    if ( action !== 0 ) {
+        this.sessionFirewall.setCell(
+            srcHostname,
+            desHostname,
+            requestType,
+            action
+        );
     } else {
-        this.sessionFirewall.unsetCell(details.srcHostname, details.desHostname, requestType);
+        this.sessionFirewall.unsetCell(
+            srcHostname,
+            desHostname,
+            requestType
+        );
     }
 
     // https://github.com/chrisaljoudi/uBlock/issues/731#issuecomment-73937469
     if ( details.persist ) {
-        if ( details.action !== 0 ) {
-            this.permanentFirewall.setCell(details.srcHostname, details.desHostname, requestType, details.action);
+        if ( action !== 0 ) {
+            this.permanentFirewall.setCell(
+                srcHostname,
+                desHostname,
+                requestType,
+                action
+            );
         } else {
-            this.permanentFirewall.unsetCell(details.srcHostname, details.desHostname, requestType, details.action);
+            this.permanentFirewall.unsetCell(
+                srcHostname,
+                desHostname,
+                requestType,
+                action
+            );
         }
         this.savePermanentFirewallRules();
     }
@@ -408,37 +494,50 @@ var matchBucket = function(url, hostname, bucket, start) {
     // Flush all cached `net` cosmetic filters if we are dealing with a
     // collapsible type: any of the cached entries could be a resource on the
     // target page.
-    var srcHostname = details.srcHostname;
     if (
         (srcHostname !== '*') &&
-        (requestType === '*' || requestType === 'image' || requestType === '3p' || requestType === '3p-frame')
+        (
+            requestType === '*' ||
+            requestType === 'image' ||
+            requestType === '3p' ||
+            requestType === '3p-frame'
+        )
     ) {
         srcHostname = '*';
     }
 
     // https://github.com/chrisaljoudi/uBlock/issues/420
     this.cosmeticFilteringEngine.removeFromSelectorCache(srcHostname, 'net');
+
+    if ( details.tabId === undefined ) { return; }
+
+    if ( requestType.startsWith('3p') ) {
+        this.updateToolbarIcon(details.tabId, 0b100);
+    }
+
+    if ( requestType === '3p' && action === 3 ) {
+        vAPI.tabs.executeScript(details.tabId, {
+            file: '/js/scriptlets/load-3p-css.js',
+            allFrames: true,
+            runAt: 'document_idle',
+        });
+    }
 };
 
 /******************************************************************************/
 
 µBlock.toggleURLFilteringRule = function(details) {
-    var changed = this.sessionURLFiltering.setRule(
+    let changed = this.sessionURLFiltering.setRule(
         details.context,
         details.url,
         details.type,
         details.action
     );
-
-    if ( !changed ) {
-        return;
-    }
+    if ( changed === false ) { return; }
 
     this.cosmeticFilteringEngine.removeFromSelectorCache(details.context, 'net');
 
-    if ( !details.persist ) {
-        return;
-    }
+    if ( details.persist !== true ) { return; }
 
     changed = this.permanentURLFiltering.setRule(
         details.context,
@@ -454,25 +553,20 @@ var matchBucket = function(url, hostname, bucket, start) {
 
 /******************************************************************************/
 
-µBlock.isBlockResult = function(result) {
-    return typeof result === 'string' && result.charCodeAt(1) === 98 /* 'b' */;
-};
-
-/******************************************************************************/
-
-µBlock.isAllowResult = function(result) {
-    return typeof result !== 'string' || result.charCodeAt(1) !== 98 /* 'b' */;
-};
-
-/******************************************************************************/
-
 µBlock.toggleHostnameSwitch = function(details) {
-    if ( this.hnSwitches.toggleZ(details.name, details.hostname, !!details.deep, details.state) ) {
-        this.saveHostnameSwitches();
-    }
+    let changed = this.sessionSwitches.toggleZ(
+        details.name,
+        details.hostname,
+        !!details.deep,
+        details.state
+    );
+    if ( changed === false ) { return; }
 
     // Take action if needed
     switch ( details.name ) {
+    case 'no-scripting':
+        this.updateToolbarIcon(details.tabId, 0b100);
+        break;
     case 'no-cosmetic-filtering':
         this.scriptlets.injectDeep(
             details.tabId,
@@ -480,92 +574,147 @@ var matchBucket = function(url, hostname, bucket, start) {
         );
         break;
     case 'no-large-media':
-        if ( details.state === false ) {
-            var pageStore = this.pageStoreFromTabId(details.tabId);
-            if ( pageStore !== null ) {
-                pageStore.temporarilyAllowLargeMediaElements();
-            }
+        const pageStore = this.pageStoreFromTabId(details.tabId);
+        if ( pageStore !== null ) {
+            pageStore.temporarilyAllowLargeMediaElements(!details.state);
         }
         break;
+    }
+
+    if ( details.persist !== true ) { return; }
+
+    changed = this.permanentSwitches.toggleZ(
+        details.name,
+        details.hostname,
+        !!details.deep,
+        details.state
+    );
+    if ( changed ) {
+        this.saveHostnameSwitches();
     }
 };
 
 /******************************************************************************/
 
-µBlock.logCosmeticFilters = (function() {
-    var tabIdToTimerMap = {};
-
-    var injectNow = function(tabId) {
-        delete tabIdToTimerMap[tabId];
-        µBlock.scriptlets.injectDeep(tabId, 'cosmetic-logger');
-    };
-
-    var injectAsync = function(tabId) {
-        if ( tabIdToTimerMap.hasOwnProperty(tabId) ) {
-            return;
+µBlock.blockingModeFromHostname = function(hn) {
+    let bits = 0;
+    if ( this.sessionSwitches.evaluateZ('no-scripting', hn) ) {
+        bits |= 0b00000010;
+    }
+    if ( this.userSettings.advancedUserEnabled ) {
+        const fw = this.sessionFirewall;
+        if ( fw.evaluateCellZY(hn, '*', '3p') === 1 ) {
+            bits |= 0b00000100;
         }
-        tabIdToTimerMap[tabId] = vAPI.setTimeout(
-            injectNow.bind(null, tabId),
-            100
-        );
+        if ( fw.evaluateCellZY(hn, '*', '3p-script') === 1 ) {
+            bits |= 0b00001000;
+        }
+        if ( fw.evaluateCellZY(hn, '*', '3p-frame') === 1 ) {
+            bits |= 0b00010000;
+        }
+    }
+    return bits;
+};
+
+µBlock.parseBlockingProfiles = (( ) => {
+    const parse = function() {
+        const s = µBlock.hiddenSettings.blockingProfiles;
+        const profiles = [];
+        s.split(/\s+/).forEach(s => {
+            let pos = s.indexOf('/');
+            if ( pos === -1 ) {
+                pos = s.length;
+            }
+            const bits = parseInt(s.slice(0, pos), 2);
+            if ( isNaN(bits) ) { return; }
+            const color = s.slice(pos + 1);
+            profiles.push({ bits, color: color !== '' ? color : '#666' });
+        });
+        µBlock.liveBlockingProfiles = profiles;
+        µBlock.blockingProfileColorCache.clear();
     };
 
-    return injectAsync;
+    parse();
+
+    self.addEventListener('hiddenSettingsChanged', ( ) => { parse(); });
+
+    return parse;
 })();
 
 /******************************************************************************/
 
+// https://github.com/NanoMeow/QuickReports/issues/6#issuecomment-414516623
+//   Inject as early as possible to make the cosmetic logger code less
+//   sensitive to the removal of DOM nodes which may match injected
+//   cosmetic filters.
+
+µBlock.logCosmeticFilters = function(tabId, frameId) {
+    vAPI.tabs.executeScript(tabId, {
+        file: '/js/scriptlets/cosmetic-logger.js',
+        frameId: frameId,
+        matchAboutBlank: true,
+        runAt: 'document_start',
+    });
+};
+
+/******************************************************************************/
+
 µBlock.scriptlets = (function() {
-    var pendingEntries = Object.create(null);
+    const pendingEntries = new Map();
 
-    var Entry = function(tabId, scriptlet, callback) {
-        this.tabId = tabId;
-        this.scriptlet = scriptlet;
-        this.callback = callback;
-        this.timer = vAPI.setTimeout(this.service.bind(this), 1000);
-    };
-
-    Entry.prototype.service = function(response) {
-        if ( this.timer !== null ) {
-            clearTimeout(this.timer);
+    const Entry = class {
+        constructor(tabId, scriptlet, callback) {
+            this.tabId = tabId;
+            this.scriptlet = scriptlet;
+            this.callback = callback;
+            this.timer = vAPI.setTimeout(this.service.bind(this), 1000);
         }
-        delete pendingEntries[makeKey(this.tabId, this.scriptlet)];
-        this.callback(response);
+        service(response) {
+            if ( this.timer !== null ) {
+                clearTimeout(this.timer);
+                this.timer = null;
+            }
+            pendingEntries.delete(makeKey(this.tabId, this.scriptlet));
+            this.callback(response);
+        }
     };
 
-    var makeKey = function(tabId, scriptlet) {
+    const makeKey = function(tabId, scriptlet) {
         return tabId + ' ' + scriptlet;
     };
 
-    var report = function(tabId, scriptlet, response) {
-        var key = makeKey(tabId, scriptlet);
-        var entry = pendingEntries[key];
-        if ( entry === undefined ) {
-            return;
-        }
+    const report = function(tabId, scriptlet, response) {
+        const key = makeKey(tabId, scriptlet);
+        const entry = pendingEntries.get(key);
+        if ( entry === undefined ) { return; }
         entry.service(response);
     };
 
-    var inject = function(tabId, scriptlet, callback) {
+    const inject = function(tabId, scriptlet, callback) {
         if ( typeof callback === 'function' ) {
             if ( vAPI.isBehindTheSceneTabId(tabId) ) {
                 callback();
                 return;
             }
-            var key = makeKey(tabId, scriptlet);
-            if ( pendingEntries[key] !== undefined ) {
-                callback();
+            const key = makeKey(tabId, scriptlet);
+            const entry = pendingEntries.get(key);
+            if ( entry !== undefined ) {
+                if ( callback !== entry.callback ) {
+                    callback();
+                }
                 return;
             }
-            pendingEntries[key] = new Entry(tabId, scriptlet, callback);
+            pendingEntries.set(key, new Entry(tabId, scriptlet, callback));
         }
-        vAPI.tabs.injectScript(tabId, { file: 'js/scriptlets/' + scriptlet + '.js' });
+        vAPI.tabs.executeScript(tabId, {
+            file: `/js/scriptlets/${scriptlet}.js`
+        });
     };
 
     // TODO: think about a callback mechanism.
-    var injectDeep = function(tabId, scriptlet) {
-        vAPI.tabs.injectScript(tabId, {
-            file: 'js/scriptlets/' + scriptlet + '.js',
+    const injectDeep = function(tabId, scriptlet) {
+        vAPI.tabs.executeScript(tabId, {
+            file: `/js/scriptlets/${scriptlet}.js`,
             allFrames: true
         });
     };
@@ -576,3 +725,5 @@ var matchBucket = function(url, hostname, bucket, start) {
         report: report
     };
 })();
+
+/******************************************************************************/

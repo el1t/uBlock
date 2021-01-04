@@ -1,7 +1,7 @@
 /*******************************************************************************
 
     uBlock Origin - a browser extension to block requests.
-    Copyright (C) 2014-2016 Raymond Hill
+    Copyright (C) 2014-present Raymond Hill
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -21,20 +21,38 @@
 
 /* global uDom */
 
-/******************************************************************************/
-
-uDom.onLoad(function() {
-
 'use strict';
 
 /******************************************************************************/
 
-var onAppDataReady = function(appData) {
+(async ( ) => {
+    document.querySelector(
+        '[href="logger-ui.html"]'
+    ).addEventListener(
+        'click',
+        self.uBlockDashboard.openOrSelectPage
+    );
+
+    const appData = await vAPI.messaging.send('dashboard', {
+        what: 'getAppData',
+    });
+
     uDom('#aboutNameVer').text(appData.name + ' v' + appData.version);
-};
 
-vAPI.messaging.send('dashboard', { what: 'getAppData' }, onAppDataReady);
+    if ( appData.canBenchmark !== true ) { return; }
 
-/******************************************************************************/
+    document.getElementById('dev').classList.add('enabled');
 
-});
+    document.getElementById('sfneBenchmark').addEventListener('click', ev => {
+        const button = ev.target;
+        button.setAttribute('disabled', '');
+        vAPI.messaging.send('dashboard', {
+            what: 'sfneBenchmark',
+        }).then(result => {
+            document.getElementById('sfneBenchmarkResult').prepend(
+                document.createTextNode(result.trim() + '\n')
+            );
+            button.removeAttribute('disabled');
+        });
+    });
+})();

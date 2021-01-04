@@ -1,10 +1,13 @@
-body {
-    margin: 0;
-    padding: 0 0.5em 0.5em 0.5em;
+body > div.body {
+    padding: 0 0.5em;
+    }
+@media screen and (max-device-width: 960px) {
+    body {
+        zoom: 1.4;
+        }
     }
 h2, h3 {
     margin: 1em 0;
-    font-family: sans-serif;
     }
 h2 {
     font-size: 18px;
@@ -15,73 +18,47 @@ h3 {
 a {
     text-decoration: none;
     }
-a.info {
-    color: black;
-    opacity: 0.3;
+.fa-icon.info {
+    color: var(--fg-icon-info-lvl-0-dimmed);
+    fill: var(--fg-icon-info-lvl-0-dimmed);
+    font-size: 115%;
     }
-a.info:hover {
-    opacity: 0.9
+.fa-icon.info:hover {
+    color: inherit;
+    fill: inherit;
     }
-a.info.important {
-    color: orangered;
+.fa-icon.info.important {
+    color: var(--fg-icon-info-lvl-3-dimmed);
+    fill: var(--fg-icon-info-lvl-3-dimmed);
     }
-button {
-    padding: 0.33em;
-    }
-div > p:first-child {
-    margin-top: 0;
-    }
-div > p:last-child {
-    margin-bottom: 0;
+.fa-icon.info.important:hover {
+    color: var(--fg-icon-info-lvl-3);
+    fill: var(--fg-icon-info-lvl-3);
     }
 input[type="number"] {
     width: 5em;
     }
-input[type="checkbox"][disabled] + label {
-    opacity: 0.4;
+input[type="checkbox"][disabled] + * {
+    color: var(--fg-0-50);
     }
-.para {
-    width: 40em;
+@media (max-height: 640px), (max-height: 800px) and (max-width: 480px) {
+    .body > p,
+    .body > ul {
+        margin: 0.5em 0;
+        }
+    .vverbose {
+        display: none !important;
+        }
     }
-.synopsis {
-    font-size: small;
-    opacity: 0.8;
+/**
+    On mobile device, the on-screen keyboard may take up
+    so much space that it overlaps the content being edited.
+    The rule below makes it possible to scroll the edited
+    content within view.
+*/
+:root.mobile {
+    overflow: auto;
     }
-.whatisthis {
-    margin: 0 0 0 8px;
-    border: 0;
-    padding: 0 0 4px 0;
-    width: 16px;
-    height: 16px;
-    background: url('../img/help16.png') no-repeat;
-    cursor: pointer;
-    opacity: 0.5;
-    vertical-align: middle;
-    }
-.whatisthis:hover {
-    opacity: 1.0;
-    }
-.whatisthis-expandable {
-    margin: 0.5em 0 1em 1.25em;
-    padding: 0.5em;
-    display: none;
-    border: 1px dotted black;
-    background-color: #F8F8F8;
-    font-size: 13px;
-    white-space: pre-line;
-    }
-.whatisthis-expandable > p {
-    margin-top: 1em;
-    margin-bottom: 0;
-    }
-.whatisthis-expandable > p:first-child {
-    margin-top: 0;
-    }
-.whatisthis-expandable.whatisthis-expanded {
-    display: block;
-    }
-.warn {
-    margin: 0;
-    padding: 5px;
-    background-color: #FEDAE0;
+:root.mobile body {
+    min-height: 600px;
     }

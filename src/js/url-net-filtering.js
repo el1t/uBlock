@@ -1,7 +1,7 @@
 /*******************************************************************************
 
-    uBlock - a browser extension to black/white list requests.
-    Copyright (C) 2015 Raymond Hill
+    uBlock Origin - a browser extension to black/white list requests.
+    Copyright (C) 2015-present Raymond Hill
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -19,163 +19,139 @@
     Home: https://github.com/gorhill/uBlock
 */
 
-/* global µBlock */
+'use strict';
 
 /******************************************************************************/
 
 // The purpose of log filtering is to create ad hoc filtering rules, to
 // diagnose and assist in the creation of custom filters.
 
-µBlock.URLNetFiltering = (function() {
-
-'use strict';
+µBlock.URLNetFiltering = (( ) => {
 
 /*******************************************************************************
 
-buckets: map of [origin + urlkey + type]
-     bucket: array of rule entry, sorted from shorter to longer url
-
+buckets: map of [hostname + type]
+     bucket: array of rule entries, sorted from shorter to longer url
 rule entry: { url, action }
-
 
 *******************************************************************************/
 
 /******************************************************************************/
 
-var actionToNameMap = {
+const actionToNameMap = {
     1: 'block',
     2: 'allow',
     3: 'noop'
 };
 
-var nameToActionMap = {
+const nameToActionMap = {
     'block': 1,
     'allow': 2,
      'noop': 3
 };
 
+const knownInvalidTypes = new Set([
+    'doc',
+    'main_frame',
+]);
+
 /******************************************************************************/
 
-var RuleEntry = function(url, action) {
+const RuleEntry = function(url, action) {
     this.url = url;
     this.action = action;
 };
 
 /******************************************************************************/
 
-var indexOfURL = function(urls, url) {
+const indexOfURL = function(entries, url) {
     // TODO: binary search -- maybe, depends on common use cases
-    var urlLen = url.length;
-    var entry;
-    // urls must be ordered by increasing length.
-    for ( var i = 0; i< urls.length; i++ ) {
-        entry = urls[i];
-        if ( entry.url.length > urlLen ) {
+    const urlLen = url.length;
+    // URLs must be ordered by increasing length.
+    for ( let i = 0; i < entries.length; i++ ) {
+        const entry = entries[i];
+        if ( entry.url.length > urlLen ) { break; }
+        if ( entry.url === url ) { return i; }
+    }
+    return -1;
+};
+
+/******************************************************************************/
+
+const indexOfMatch = function(entries, url) {
+    const urlLen = url.length;
+    let i = entries.length;
+    while ( i-- ) {
+        if ( entries[i].url.length <= urlLen ) {
             break;
         }
-        if ( entry.url === url ) {
-            return i;
-        }
+    }
+    if ( i !== -1 ) {
+        do {
+            if ( url.startsWith(entries[i].url) ) {
+                return i;
+            }
+        } while ( i-- );
     }
     return -1;
 };
 
 /******************************************************************************/
 
-var indexOfMatch = function(urls, url) {
+const indexFromLength = function(entries, len) {
     // TODO: binary search -- maybe, depends on common use cases
-    var urlLen = url.length;
-    var i = urls.length;
-    var entry;
-    while ( i-- ) {
-        entry = urls[i];
-        if ( entry.url.length > urlLen ) {
-            continue;
-        }
-        if ( url.startsWith(entry.url) ) {
-            return i;
-        }
+    // URLs must be ordered by increasing length.
+    for ( let i = 0; i < entries.length; i++ ) {
+        if ( entries[i].url.length > len ) { return i; }
     }
     return -1;
 };
 
 /******************************************************************************/
 
-var indexFromLength = function(urls, len) {
-    // TODO: binary search -- maybe, depends on common use cases
-    // urls must be ordered by increasing length.
-    for ( var i = 0; i< urls.length; i++ ) {
-        if ( urls[i].url.length > len ) {
-            return i;
-        }
-    }
-    return -1;
-};
-
-/******************************************************************************/
-
-var addRuleEntry = function(urls, url, action) {
-    var entry = new RuleEntry(url, action);
-    var i = indexFromLength(urls, url.length);
+const addRuleEntry = function(entries, url, action) {
+    const entry = new RuleEntry(url, action);
+    const i = indexFromLength(entries, url.length);
     if ( i === -1 ) {
-        urls.push(entry);
+        entries.push(entry);
     } else {
-        urls.splice(i, 0, entry);
+        entries.splice(i, 0, entry);
     }
 };
 
 /******************************************************************************/
 
-var urlKeyFromURL = function(url) {
-    // Experimental: running benchmarks first
-    //if ( url === '*' ) {
-    //    return url;
-    //}
-    var match = reURLKey.exec(url);
-    return match !== null ? match[0] : '';
-};
-
-var reURLKey = /^[a-z]+:\/\/[^\/?#]+/;
-
-/******************************************************************************/
-
-var URLNetFiltering = function() {
+const URLNetFiltering = function() {
     this.reset();
 };
 
 /******************************************************************************/
 
-// rules:
-//   origin + urlkey + type => urls
-//     urls = collection of urls to match
-
 URLNetFiltering.prototype.reset = function() {
-    this.rules = Object.create(null);
+    this.rules = new Map();
     // registers, filled with result of last evaluation
     this.context = '';
     this.url = '';
     this.type = '';
     this.r = 0;
+    this.changed = false;
+    this.decomposedSource = [];
 };
 
 /******************************************************************************/
 
 URLNetFiltering.prototype.assign = function(other) {
-    var thisRules = this.rules;
-    var otherRules = other.rules;
-    var k;
-
     // Remove rules not in other
-    for ( k in thisRules ) {
-        if ( otherRules[k] === undefined ) {
-            delete thisRules[k];
+    for ( const key of this.rules.keys() ) {
+        if ( other.rules.has(key) === false ) {
+            this.rules.delete(key);
         }
     }
-
     // Add/change rules in other
-    for ( k in otherRules ) {
-        thisRules[k] = otherRules[k].slice();
+    for ( const entry of other.rules ) {
+        this.rules.set(entry[0], entry[1].slice());
     }
+    this.changed = true;
 };
 
 /******************************************************************************/
@@ -184,118 +160,80 @@ URLNetFiltering.prototype.setRule = function(srcHostname, url, type, action) {
     if ( action === 0 ) {
         return this.removeRule(srcHostname, url, type);
     }
-
-    var urlKey = urlKeyFromURL(url);
-    if ( urlKey === '' ) {
-        return false;
+    const bucketKey = srcHostname + ' ' + type;
+    let entries = this.rules.get(bucketKey);
+    if ( entries === undefined ) {
+        entries = [];
+        this.rules.set(bucketKey, entries);
     }
-
-    var bucketKey = srcHostname + ' ' + urlKey + ' ' + type;
-    var urls = this.rules[bucketKey];
-    if ( urls === undefined ) {
-        urls = this.rules[bucketKey] = [];
-    }
-
-    var entry;
-    var i = indexOfURL(urls, url);
+    const i = indexOfURL(entries, url);
     if ( i !== -1 ) {
-        entry = urls[i];
-        if ( entry.action === action ) {
-            return false;
-        }
+        const entry = entries[i];
+        if ( entry.action === action ) { return false; }
         entry.action = action;
-        return true;
+    } else {
+        addRuleEntry(entries, url, action);
     }
-
-    addRuleEntry(urls, url, action);
+    this.changed = true;
     return true;
 };
 
 /******************************************************************************/
 
 URLNetFiltering.prototype.removeRule = function(srcHostname, url, type) {
-    var urlKey = urlKeyFromURL(url);
-    if ( urlKey === '' ) {
-        return false;
+    const bucketKey = srcHostname + ' ' + type;
+    const entries = this.rules.get(bucketKey);
+    if ( entries === undefined ) { return false; }
+    const i = indexOfURL(entries, url);
+    if ( i === -1 ) { return false; }
+    entries.splice(i, 1);
+    if ( entries.length === 0 ) {
+        this.rules.delete(bucketKey);
     }
-
-    var bucketKey = srcHostname + ' ' + urlKey + ' ' + type;
-    var urls = this.rules[bucketKey];
-    if ( urls === undefined ) {
-        return false;
-    }
-
-    var i = indexOfURL(urls, url);
-    if ( i === -1 ) {
-        return false;
-    }
-
-    urls.splice(i, 1);
-    if ( urls.length === 0 ) {
-        delete this.rules[bucketKey];
-    }
-
+    this.changed = true;
     return true;
 };
 
 /******************************************************************************/
 
 URLNetFiltering.prototype.evaluateZ = function(context, target, type) {
-    var urlKey = urlKeyFromURL(target);
-    if ( urlKey === '' ) {
-        this.r = 0;
-        return this;
+    this.r = 0;
+    if ( this.rules.size === 0 ) {
+        return 0;
     }
-
-    var urls, pos, i, entry, keyShard;
-
-    for (;;) {
-        this.context = context;
-        keyShard = context + ' ' + urlKey;
-        if ( (urls = this.rules[keyShard + ' ' + type]) ) {
-            i = indexOfMatch(urls, target);
+    µBlock.decomposeHostname(context, this.decomposedSource);
+    for ( let shn of this.decomposedSource ) {
+        this.context = shn;
+        let entries = this.rules.get(shn + ' ' + type);
+        if ( entries !== undefined ) {
+            let i = indexOfMatch(entries, target);
             if ( i !== -1 ) {
-                entry = urls[i];
+                let entry = entries[i];
                 this.url = entry.url;
                 this.type = type;
                 this.r = entry.action;
-                return this;
+                return this.r;
             }
         }
-        if ( (urls = this.rules[keyShard + ' *']) ) {
-            i = indexOfMatch(urls, target);
+        entries = this.rules.get(shn + ' *');
+        if ( entries !== undefined ) {
+            let i = indexOfMatch(entries, target);
             if ( i !== -1 ) {
-                entry = urls[i];
+                let entry = entries[i];
                 this.url = entry.url;
                 this.type = '*';
                 this.r = entry.action;
-                return this;
+                return this.r;
             }
         }
-        /* Experimental: running benchmarks first
-        if ( urls = this.rules[context + ' * ' + type] ) {
-            entry = urls[0];
-            this.url = '*';
-            this.type = type;
-            this.r = entry.action;
-            return this;
-        }
-        if ( urls = this.rules[context + ' * *'] ) {
-            entry = urls[0];
-            this.url = this.type = '*';
-            this.r = entry.action;
-            return this;
-        }
-        */
-        if ( context === '*' ) {
-            break;
-        }
-        pos = context.indexOf('.');
-        context = pos !== -1 ? context.slice(pos + 1) : '*';
     }
+    return 0;
+};
 
-    this.r = 0;
-    return this;
+/******************************************************************************/
+
+URLNetFiltering.prototype.mustAllowCellZ = function(context, target, type) {
+    return this.evaluateZ(context, target, type).r === 2;
 };
 
 /******************************************************************************/
@@ -306,60 +244,73 @@ URLNetFiltering.prototype.mustBlockOrAllow = function() {
 
 /******************************************************************************/
 
-URLNetFiltering.prototype.toFilterString = function() {
-    if ( this.r === 0 ) {
-        return '';
-    }
-    var body = this.context + ' ' + this.url + ' ' + this.type;
-    if ( this.r === 1 ) {
-        return 'lb:' + body + ' block';
-    }
-    if ( this.r === 2 ) {
-        return 'la:' + body + ' allow';
-    }
-    /* this.r === 3 */
-    return 'ln:' + body + ' noop';
+URLNetFiltering.prototype.toLogData = function() {
+    if ( this.r === 0 ) { return; }
+    return {
+        source: 'dynamicUrl',
+        result: this.r,
+        rule: [
+            this.context,
+            this.url,
+            this.type,
+            this.intToActionMap.get(this.r)
+        ],
+        raw: this.context + ' ' +
+             this.url + ' ' +
+             this.type + ' ' +
+             this.intToActionMap.get(this.r)
+    };
 };
+
+URLNetFiltering.prototype.intToActionMap = new Map([
+    [ 1, ' block' ],
+    [ 2, ' allow' ],
+    [ 3, ' noop' ]
+]);
 
 /******************************************************************************/
 
 URLNetFiltering.prototype.copyRules = function(other, context, urls, type) {
-    var changed = false;
-    var url, otherOwn, thisOwn;
-    var i = urls.length;
+    let i = urls.length;
     while ( i-- ) {
-        url = urls[i];
+        const url = urls[i];
         other.evaluateZ(context, url, type);
-        otherOwn = other.context === context && other.url === url && other.type === type;
+        const otherOwn = other.r !== 0 &&
+                         other.context === context &&
+                         other.url === url &&
+                         other.type === type;
         this.evaluateZ(context, url, type);
-        thisOwn = this.context === context && this.url === url && this.type === type;
+        const  thisOwn = this.r !== 0 &&
+                         this.context === context &&
+                         this.url === url &&
+                         this.type === type;
         if ( otherOwn && !thisOwn ) {
             this.setRule(context, url, type, other.r);
-            changed = true;
+            this.changed = true;
         }
         if ( !otherOwn && thisOwn ) {
             this.removeRule(context, url, type);
-            changed = true;
+            this.changed = true;
         }
     }
-    return changed;
+    return this.changed;
 };
 
 /******************************************************************************/
 
 // "url-filtering:" hostname url type action
 
-URLNetFiltering.prototype.toString = function() {
-    var out = [];
-    var pos, hn, type, urls, i, entry;
-    for ( var bucketKey in this.rules ) {
-        pos = bucketKey.indexOf(' ');
-        hn = bucketKey.slice(0, pos);
-        pos = bucketKey.lastIndexOf(' ');
-        type = bucketKey.slice(pos + 1);
-        urls = this.rules[bucketKey];
-        for ( i = 0; i < urls.length; i++ ) {
-            entry = urls[i];
+URLNetFiltering.prototype.toArray = function() {
+    const out = [];
+    for ( var item of this.rules ) {
+        const key = item[0];
+        let pos = key.indexOf(' ');
+        const hn = key.slice(0, pos);
+        pos = key.lastIndexOf(' ');
+        const type = key.slice(pos + 1);
+        const entries = item[1];
+        for ( let i = 0; i < entries.length; i++ ) {
+            const entry = entries[i];
             out.push(
                 hn + ' ' +
                 entry.url + ' ' +
@@ -368,54 +319,54 @@ URLNetFiltering.prototype.toString = function() {
             );
         }
     }
-    return out.sort().join('\n');
+    return out;
+};
+
+URLNetFiltering.prototype.toString = function() {
+    return this.toArray().sort().join('\n');
 };
 
 /******************************************************************************/
 
 URLNetFiltering.prototype.fromString = function(text) {
-    var textEnd = text.length;
-    var lineBeg = 0, lineEnd;
-    var line, fields;
-
     this.reset();
-
-    while ( lineBeg < textEnd ) {
-        lineEnd = text.indexOf('\n', lineBeg);
-        if ( lineEnd < 0 ) {
-            lineEnd = text.indexOf('\r', lineBeg);
-            if ( lineEnd < 0 ) {
-                lineEnd = textEnd;
-            }
-        }
-        line = text.slice(lineBeg, lineEnd).trim();
-        lineBeg = lineEnd + 1;
-
-        if ( line === '' ) {
-            continue;
-        }
-
-        // Coarse test
-        if ( line.indexOf('://') === -1 ) {
-            continue;
-        }
-
-        fields = line.split(/\s+/);
-        if ( fields.length !== 4 ) {
-            continue;
-        }
-
-        // Finer test
-        if ( fields[1].indexOf('://') === -1 ) {
-            continue;
-        }
-
-        if ( nameToActionMap.hasOwnProperty(fields[3]) === false ) {
-            continue;
-        }
-
-        this.setRule(fields[0], fields[1], fields[2], nameToActionMap[fields[3]]);
+    const lineIter = new µBlock.LineIterator(text);
+    while ( lineIter.eot() === false ) {
+        this.addFromRuleParts(lineIter.next().trim().split(/\s+/));
     }
+};
+
+/******************************************************************************/
+
+URLNetFiltering.prototype.validateRuleParts = function(parts) {
+    if ( parts.length !== 4 ) { return; }
+    if ( parts[1].indexOf('://') <= 0 ) { return; }
+    if (
+        /[^a-z_-]/.test(parts[2]) && parts[2] !== '*' ||
+        knownInvalidTypes.has(parts[2])
+    ) {
+        return;
+    }
+    if ( nameToActionMap.hasOwnProperty(parts[3]) === false ) { return; }
+    return parts;
+};
+
+/******************************************************************************/
+
+URLNetFiltering.prototype.addFromRuleParts = function(parts) {
+    if ( this.validateRuleParts(parts) !== undefined ) {
+        this.setRule(parts[0], parts[1], parts[2], nameToActionMap[parts[3]]);
+        return true;
+    }
+    return false;
+};
+
+URLNetFiltering.prototype.removeFromRuleParts = function(parts) {
+    if ( this.validateRuleParts(parts) !== undefined ) {
+        this.removeRule(parts[0], parts[1], parts[2]);
+        return true;
+    }
+    return false;
 };
 
 /******************************************************************************/

@@ -1,14 +1,26 @@
-div > p:first-child {
-    margin-top: 0;
+html {
+    height: 100vh;
+    overflow: hidden;
+    width: 100vw;
     }
-div > p:last-child {
-    margin-bottom: 0;
-    }
-textarea {
-    box-sizing: border-box;
-    height: 60vh;
-    text-align: left;
-    white-space: pre;
+body {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    justify-content: stretch;
+    overflow: hidden;
     width: 100%;
-    word-wrap: normal;
+    }
+.body {
+    flex-shrink: 0;
+    }
+.codeMirrorContainer {
+    flex-grow: 1;
+    }
+#advancedSettings {
+    border-top: 1px solid #ddd;
+    text-align: left;
+    }
+.CodeMirror-wrap pre {
+    word-break: break-all;
     }

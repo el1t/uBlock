@@ -1,16 +1,22 @@
-div > p:first-child {
-    margin-top: 0;
+html {
+    height: 100vh;
+    overflow: hidden;
+    width: 100vw;
     }
-div > p:last-child {
-    margin-bottom: 0;
-    }
-#whitelist {
-    box-sizing: border-box;
-    height: 60vh;
-	text-align: left;
-    white-space: pre;
+body {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    justify-content: stretch;
+    overflow: hidden;
     width: 100%;
     }
-#whitelist.bad {
-    background-color: #fee;
+.body {
+    flex-shrink: 0;
+    }
+.codeMirrorContainer {
+    flex-grow: 1;
+    }
+#whitelist {
+    text-align: left;
     }

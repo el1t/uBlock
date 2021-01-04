@@ -2,13 +2,15 @@
 	"browser": true,
 	"devel": true,
 	"eqeqeq": true,
-	"esnext": true,
+	"esversion": 8,
 	"globals": {
-		"chrome": false,
-		"Components": false, // global variable in Firefox
+		"browser": false,    // global variable in Firefox, Edge
+		"chrome": false,     // global variable in Chromium, Chrome, Opera
+		"log": false,
 		"safari": false,
 		"self": false,
 		"vAPI": false,
+		"webext": false,
 		"µBlock": false
 	},
 	"laxbreak": true,
@@ -18,6 +20,5 @@
 	"sub": true,
 	"undef": true,
 	"unused": true,
-	"validthis": true,
-	"-W058": true // suppress "Missing '()' invoking a constructor" message
+	"validthis": true
 }

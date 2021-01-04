@@ -1,7 +1,7 @@
 /*******************************************************************************
 
     uBlock Origin - a browser extension to block requests.
-    Copyright (C) 2014-2016 Raymond Hill
+    Copyright (C) 2014-present Raymond Hill
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -20,6 +20,7 @@
 */
 
 /* global uDom */
+
 'use strict';
 
 /******************************************************************************/
@@ -32,50 +33,45 @@ self.uBlockDashboard = self.uBlockDashboard || {};
 //   Remove literal duplicate lines from a set based on another set.
 
 self.uBlockDashboard.mergeNewLines = function(text, newText) {
-    var lineBeg, textEnd, lineEnd;
-    var line, hash, bucket;
-
     // Step 1: build dictionary for existing lines.
-    var fromDict = Object.create(null);
-    lineBeg = 0;
-    textEnd = text.length;
+    const fromDict = new Map();
+    let lineBeg = 0;
+    let textEnd = text.length;
     while ( lineBeg < textEnd ) {
-        lineEnd = text.indexOf('\n', lineBeg);
+        let lineEnd = text.indexOf('\n', lineBeg);
         if ( lineEnd === -1 ) {
             lineEnd = text.indexOf('\r', lineBeg);
             if ( lineEnd === -1 ) {
                 lineEnd = textEnd;
             }
         }
-        line = text.slice(lineBeg, lineEnd).trim();
+        const line = text.slice(lineBeg, lineEnd).trim();
         lineBeg = lineEnd + 1;
-        if ( line.length === 0 ) {
-            continue;
-        }
-        hash = line.slice(0, 8);
-        bucket = fromDict[hash];
+        if ( line.length === 0 ) { continue; }
+        const hash = line.slice(0, 8);
+        const bucket = fromDict.get(hash);
         if ( bucket === undefined ) {
-            fromDict[hash] = line;
+            fromDict.set(hash, line);
         } else if ( typeof bucket === 'string' ) {
-            fromDict[hash] = [bucket, line];
+            fromDict.set(hash, [ bucket, line ]);
         } else /* if ( Array.isArray(bucket) ) */ {
             bucket.push(line);
         }
     }
 
     // Step 2: use above dictionary to filter out duplicate lines.
-    var out = [ '' ];
+    const out = [ '' ];
     lineBeg = 0;
     textEnd = newText.length;
     while ( lineBeg < textEnd ) {
-        lineEnd = newText.indexOf('\n', lineBeg);
+        let lineEnd = newText.indexOf('\n', lineBeg);
         if ( lineEnd === -1 ) {
             lineEnd = newText.indexOf('\r', lineBeg);
             if ( lineEnd === -1 ) {
                 lineEnd = textEnd;
             }
         }
-        line = newText.slice(lineBeg, lineEnd).trim();
+        const line = newText.slice(lineBeg, lineEnd).trim();
         lineBeg = lineEnd + 1;
         if ( line.length === 0 ) {
             if ( out[out.length - 1] !== '' ) {
@@ -83,7 +79,7 @@ self.uBlockDashboard.mergeNewLines = function(text, newText) {
             }
             continue;
         }
-        bucket = fromDict[line.slice(0, 8)];
+        const bucket = fromDict.get(line.slice(0, 8));
         if ( bucket === undefined ) {
             out.push(line);
             continue;
@@ -98,13 +94,17 @@ self.uBlockDashboard.mergeNewLines = function(text, newText) {
         }
     }
 
-    return text.trim() + '\n' + out.join('\n');
+    const append = out.join('\n').trim();
+    if ( text !== '' && append !== '' ) {
+        text += '\n\n';
+    }
+    return text + append;
 };
 
 /******************************************************************************/
 
 self.uBlockDashboard.dateNowToSensibleString = function() {
-    var now = new Date(Date.now() - (new Date()).getTimezoneOffset() * 60000);
+    const now = new Date(Date.now() - (new Date()).getTimezoneOffset() * 60000);
     return now.toISOString().replace(/\.\d+Z$/, '')
                             .replace(/:/g, '.')
                             .replace('T', '_');
@@ -112,13 +112,104 @@ self.uBlockDashboard.dateNowToSensibleString = function() {
 
 /******************************************************************************/
 
+self.uBlockDashboard.patchCodeMirrorEditor = (function() {
+    let grabFocusTimer;
+    let grabFocusTarget;
+
+    const grabFocus = function() {
+        grabFocusTarget.focus();
+        grabFocusTimer = grabFocusTarget = undefined;
+    };
+    const grabFocusAsync = function(cm) {
+        grabFocusTarget = cm;
+        if ( grabFocusTimer === undefined ) {
+            grabFocusTimer = vAPI.setTimeout(grabFocus, 1);
+        }
+    };
+
+    // https://github.com/gorhill/uBlock/issues/3646
+    const patchSelectAll = function(cm, details) {
+        var vp = cm.getViewport();
+        if ( details.ranges.length !== 1 ) { return; }
+        var range = details.ranges[0],
+            lineFrom = range.anchor.line,
+            lineTo = range.head.line;
+        if ( lineTo === lineFrom ) { return; }
+        if ( range.head.ch !== 0 ) { lineTo += 1; }
+        if ( lineFrom !== vp.from || lineTo !== vp.to ) { return; }
+        details.update([
+            {
+                anchor: { line: 0, ch: 0 },
+                head: { line: cm.lineCount(), ch: 0 }
+            }
+        ]);
+        grabFocusAsync(cm);
+    };
+
+    let lastGutterClick = 0;
+    let lastGutterLine = 0;
+
+    const onGutterClicked = function(cm, line, gutter) {
+        if ( gutter !== 'CodeMirror-linenumbers' ) { return; }
+        grabFocusAsync(cm);
+        const delta = Date.now() - lastGutterClick;
+        // Single click
+        if ( delta >= 500 || line !== lastGutterLine ) {
+            cm.setSelection(
+                { line, ch: 0 },
+                { line: line + 1, ch: 0 }
+            );
+            lastGutterClick = Date.now();
+            lastGutterLine = line;
+            return;
+        }
+        // Double click: select fold-able block or all
+        let lineFrom = 0;
+        let lineTo = cm.lineCount();
+        const foldFn = cm.getHelper({ line, ch: 0 }, 'fold');
+        if ( foldFn instanceof Function ) {
+            const range = foldFn(cm, { line, ch: 0 });
+            if ( range !== undefined ) {
+                lineFrom = range.from.line;
+                lineTo = range.to.line + 1;
+            }
+        }
+        cm.setSelection(
+            { line: lineFrom, ch: 0 },
+            { line: lineTo, ch: 0 },
+            { scroll: false }
+        );
+        lastGutterClick = 0;
+    };
+
+    return function(cm) {
+        if ( cm.options.inputStyle === 'contenteditable' ) {
+            cm.on('beforeSelectionChange', patchSelectAll);
+        }
+        cm.on('gutterClick', onGutterClicked);
+    };
+})();
+
+/******************************************************************************/
+
+self.uBlockDashboard.openOrSelectPage = function(url, options = {}) {
+    let ev;
+    if ( url instanceof MouseEvent ) {
+        ev = url;
+        url = ev.target.getAttribute('href');
+    } 
+    const details = Object.assign({ url, select: true, index: -1 }, options);
+    vAPI.messaging.send('default', {
+        what: 'gotoURL',
+        details,
+    });
+    if ( ev ) {
+        ev.preventDefault();
+    }
+};
+
+/******************************************************************************/
+
 // Open links in the proper window
 uDom('a').attr('target', '_blank');
 uDom('a[href*="dashboard.html"]').attr('target', '_parent');
-uDom('.whatisthis').on('click', function() {
-    uDom(this)
-        .parent()
-        .descendants('.whatisthis-expandable')
-        .first()
-        .toggleClass('whatisthis-expanded');
-});

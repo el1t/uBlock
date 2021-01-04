@@ -2,8 +2,11 @@
 <html>
 <head>
 <meta charset="utf-8">
-<title>uBlock — Ubiquitous rules</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, minimum-scale=1">
+<title>uBlock — Filter lists</title>
+<link rel="stylesheet" type="text/css" href="css/themes/default.css">
 <link rel="stylesheet" type="text/css" href="css/common.css">
+<link rel="stylesheet" type="text/css" href="css/fa-icons.css">
 <link rel="stylesheet" type="text/css" href="css/dashboard-common.css">
 <link rel="stylesheet" type="text/css" href="css/cloud-ui.css">
 <link rel="stylesheet" type="text/css" href="css/3p-filters.css">
@@ -11,62 +14,60 @@
 
 <body>
 
+<div class="body">
+
 <div id="cloudWidget" class="hide" data-cloud-entry="tpFiltersPane"></div>
+<div id="actions">
+    <button id="buttonApply" class="important disabled iconifiable" type="button" data-i18n-title="3pApplyChanges"><span class="fa-icon">check</span><span data-i18n="3pApplyChanges"></span></button>
+    <button id="buttonUpdate" class="important disabled iconifiable" type="button" data-i18n-title="3pUpdateNow"><span class="fa-icon">refresh</span><span data-i18n="3pUpdateNow"></span></button>
+    <button id="buttonPurgeAll" class="disabled iconifiable" type="button" data-i18n-title="3pPurgeAll"><span class="fa-icon">clock-o</span><span data-i18n="3pPurgeAll"></span></button>
+</div>
 
 <div>
-    <button id="buttonApply" class="important disabled" data-i18n="3pApplyChanges"></button>
-    <ul id="options">
-        <li><input type="checkbox" id="autoUpdate"><label data-i18n="3pAutoUpdatePrompt1" for="autoUpdate"></label>&ensp;
-            <button class="custom important disabled" id="buttonUpdate" data-i18n="3pUpdateNow"></button>
-            <button id="buttonPurgeAll" class="custom disabled" data-i18n="3pPurgeAll"></button>
-        <li><input type="checkbox" id="parseCosmeticFilters"><label data-i18n="3pParseAllABPHideFiltersPrompt1" for="parseCosmeticFilters"></label><button class="whatisthis"></button>
-            <div class="whatisthis-expandable para" data-i18n="3pParseAllABPHideFiltersInfo"></div>
-            <ul style="padding-left: 2em;">
-                <li><input type="checkbox" id="ignoreGenericCosmeticFilters"><label data-i18n="3pIgnoreGenericCosmeticFilters" for="ignoreGenericCosmeticFilters"></label><button class="whatisthis"></button>
-                <div class="whatisthis-expandable para" data-i18n="3pIgnoreGenericCosmeticFiltersInfo"></div>
-            </ul>
-        <li><p id="listsOfBlockedHostsPrompt"></p>
-    </ul>
-    <ul id="lists"></ul>
+    <div class="li"><label><span class="input checkbox"><input type="checkbox" id="autoUpdate"><svg viewBox="0 0 24 24"><path d="M1.73,12.91 8.1,19.28 22.79,4.59"/></svg></span><span data-i18n="3pAutoUpdatePrompt1"></span></label></div>
+    <div class="li"><label><span class="input checkbox"><input type="checkbox" id="parseCosmeticFilters"><svg viewBox="0 0 24 24"><path d="M1.73,12.91 8.1,19.28 22.79,4.59"/></svg></span><span><span data-i18n="3pParseAllABPHideFiltersPrompt1"></span>&nbsp;<span class="fa-icon info" data-i18n-title="3pParseAllABPHideFiltersInfo">question-circle</span></span></label>
+    </div>
+    <div class="li"><label><span class="input checkbox"><input type="checkbox" id="ignoreGenericCosmeticFilters"><svg viewBox="0 0 24 24"><path d="M1.73,12.91 8.1,19.28 22.79,4.59"/></svg></span><span><span data-i18n="3pIgnoreGenericCosmeticFilters"></span>&nbsp;<span class="fa-icon info" data-i18n-title="3pIgnoreGenericCosmeticFiltersInfo">question-circle</span></span></label>
+    </div>
 </div>
 
-<div id="externalListsDiv">
-<p>
-    <span data-i18n="3pExternalListsHint" style="margin: 0 0 0.25em 0; font-size: 13px;"></span>
-    <a class="fa info" href="https://github.com/gorhill/uBlock/wiki/Filter-lists-from-around-the-web" target="_blank">&#xf05a;</a>
-    </p>
-<p style="margin: 0.25em 0 0 0">
-    <textarea id="externalLists" dir="ltr" spellcheck="false"></textarea>
-    <button id="externalListsApply" class="custom important" disabled="true" data-i18n="3pExternalListsApply"></button></p>
+<div>
+    <div><span id="listsOfBlockedHostsPrompt"></span>
+        <div id="lists"></div>
+    </div>
 </div>
 
-<div id="busyOverlay">
-    <div></div>
-    <!-- progress bar widget -->
-    <div><div></div><div></div></div>
 </div>
 
 <div id="templates" style="display: none;">
-    <ul>
-        <li class="groupEntry"><span class="geName"></span> <span class="geCount dim"></span>
-            <ul></ul>
-            </li>
-        <li class="listEntry">
-            <input type="checkbox">
-            <a type="text/plain" target="_blank" href=""></a>
-            <a class="fa" style="display: none;" target="_blank">&#xf05a;</a>
-            <a href="" style="display: none;" target="_blank"></a>: <!--
-         --><span class="counts dim"></span><!--
-         --><span class="status unsecure" style="display: none;">http</span><!--
-         --><span class="status new" style="display: none;" data-i18n="3pExternalListNew"></span><!--
-         --><span class="status obsolete" style="display: none;" data-i18n="3pExternalListObsolete"></span><!--
-         --><span class="status purge" style="display: none;" data-i18n="3pExternalListPurge"></span>
-            </li>
-        </ul>
+    <div class="groupEntry">
+        <div class="geDetails"><span class="geName"></span> <span class="geCount"></span></div>
+        <div class="listEntries"></div>
     </div>
+    <div class="li listEntry">
+        <label><span class="input checkbox"><input type="checkbox"><svg viewBox="0 0 24 24"><path d="M1.73,12.91 8.1,19.28 22.79,4.59"/></svg></span><span><span class="listname forinput"></span> <span class="iconbar"><!--
+     --><a class="fa-icon content" href="#" type="text/plain" target="_blank" data-i18n-title="3pViewContent">eye-open</a><!--
+     --><a class="fa-icon support" href="#" target="_blank">home</a><!--
+     --><span class="fa-icon remove">trash-o</span><!--
+     --><a class="fa-icon mustread" href="#" target="_blank">info-circle</a><!--
+     --><span class="fa-icon status unsecure" title="http">unlock-alt</span><!--
+     --><span class="fa-icon status obsolete" data-i18n-title="3pExternalListObsolete">exclamation-triangle</span><!--
+     --><span class="fa-icon status cache">clock-o</span><!--
+     --><span class="fa-icon status updating" data-i18n-title="3pUpdating">spinner</span><!--
+     --><span class="fa-icon status failed" data-i18n-title="3pNetworkError">unlink</span><!--
+     --><span class="counts"></span></span></span></label>
+    </div>
+    <div class="listEntry toImport"><label><span class="input checkbox"><input type="checkbox" id="importLists"><svg viewBox="0 0 24 24"><path d="M1.73,12.91 8.1,19.28 22.79,4.59"/></svg></span><span><span class="forinput" data-i18n="3pImport"></span> <a class="fa-icon info towiki" href="https://github.com/gorhill/uBlock/wiki/Filter-lists-from-around-the-web" target="_blank">info-circle</a></span></label><!--
+        --><!--
+        --><textarea id="externalLists" dir="ltr" spellcheck="false" placeholder="3pExternalListsHint"></textarea>
+    </div>
+</div>
 
+<script src="js/fa-icons.js"></script>
+<script src="js/vapi.js"></script>
 <script src="js/vapi-common.js"></script>
 <script src="js/vapi-client.js"></script>
+<script src="js/vapi-client-extra.js"></script>
 <script src="js/udom.js"></script>
 <script src="js/i18n.js"></script>
 <script src="js/dashboard-common.js"></script>

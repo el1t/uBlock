@@ -1,7 +1,7 @@
 /*******************************************************************************
 
     uBlock Origin - a browser extension to block requests.
-    Copyright (C) 2015-2016 Raymond Hill
+    Copyright (C) 2015-2018 Raymond Hill
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -19,18 +19,16 @@
     Home: https://github.com/gorhill/uBlock
 */
 
-/******************************************************************************/
-/******************************************************************************/
-
-(function() {
-
 'use strict';
 
 /******************************************************************************/
+/******************************************************************************/
 
-if ( typeof vAPI !== 'object' || !vAPI.domFilterer ) {
-    return;
-}
+(( ) => {
+
+/******************************************************************************/
+
+if ( typeof vAPI !== 'object' || !vAPI.domFilterer ) { return; }
 
 /******************************************************************************/
 
@@ -49,7 +47,7 @@ if ( document.querySelector('iframe.dom-inspector.' + sessionId) !== null ) {
 // Added serializeAsString parameter.
 
 /*! http://mths.be/cssescape v0.2.1 by @mathias | MIT license */
-var cssEscape = (function(/*root*/) {
+const cssEscape = (function(/*root*/) {
 
     var InvalidCharacterError = function(message) {
         this.message = message;
@@ -137,52 +135,46 @@ var cssEscape = (function(/*root*/) {
 /******************************************************************************/
 /******************************************************************************/
 
+let loggerConnectionId;
+
 // Highlighter-related
-var svgRoot = null;
-var pickerRoot = null;
-var highlightedElementLists = [ [], [], [] ];
+let svgRoot = null;
+let pickerRoot = null;
 
-var nodeToIdMap = new WeakMap(); // No need to iterate
-var nodeToCosmeticFilterMap = new WeakMap();
-var toggledNodes = new Map();
+let nodeToIdMap = new WeakMap(); // No need to iterate
 
-/******************************************************************************/
+let blueNodes = [];
+const roRedNodes = new Map();    // node => current cosmetic filter
+const rwRedNodes = new Set();    // node => new cosmetic filter (toggle node)
+//var roGreenNodes = new Map();  // node => current exception cosmetic filter (can't toggle)
+const rwGreenNodes = new Set();  // node => new exception cosmetic filter (toggle filter)
 
-// Some kind of fingerprint for the DOM, without incurring too much overhead.
-
-var domFingerprint = function() {
-    return sessionId;
-};
+const reHasCSSCombinators = /[ >+~]/;
 
 /******************************************************************************/
 
-var domLayout = (function() {
-    var skipTagNames = {
-        'br': true,
-        'link': true,
-        'meta': true,
-        'script': true,
-        'style': true
-    };
-
-    var resourceAttrNames = {
-        'a': 'href',
-        'iframe': 'src',
-        'img': 'src',
-        'object': 'data'
-    };
+const domLayout = (function() {
+    const skipTagNames = new Set([
+        'br', 'head', 'link', 'meta', 'script', 'style', 'title'
+    ]);
+    const resourceAttrNames = new Map([
+        [ 'a', 'href' ],
+        [ 'iframe', 'src' ],
+        [ 'img', 'src' ],
+        [ 'object', 'data' ]
+    ]);
 
     var idGenerator = 0;
 
     // This will be used to uniquely identify nodes across process.
 
-    var newNodeId = function(node) {
+    const newNodeId = function(node) {
         var nid = 'n' + (idGenerator++).toString(36);
         nodeToIdMap.set(node, nid);
         return nid;
     };
 
-    var selectorFromNode = function(node) {
+    const selectorFromNode = function(node) {
         var str, attr, pos, sw, i;
         var tag = node.localName;
         var selector = cssEscape(tag);
@@ -201,11 +193,15 @@ var domLayout = (function() {
             }
         }
         // Tag-specific attributes
-        if ( resourceAttrNames.hasOwnProperty(tag) ) {
-            attr = resourceAttrNames[tag];
+        attr = resourceAttrNames.get(tag);
+        if ( attr !== undefined ) {
             str = node.getAttribute(attr) || '';
             str = str.trim();
-            pos = str.indexOf('#');
+            if ( str.startsWith('data:') ) {
+                pos = 5;
+            } else {
+                pos = str.search(/[#?]/);
+            }
             if ( pos !== -1 ) {
                 str = str.slice(0, pos);
                 sw = '^';
@@ -219,31 +215,27 @@ var domLayout = (function() {
         return selector;
     };
 
-    var DomRoot = function() {
+    const DomRoot = function() {
         this.nid = newNodeId(document.body);
         this.lvl = 0;
         this.sel = 'body';
         this.cnt = 0;
-        this.filter = nodeToCosmeticFilterMap.get(document.body);
+        this.filter = roRedNodes.get(document.body);
     };
 
-    var DomNode = function(node, level) {
+    const DomNode = function(node, level) {
         this.nid = newNodeId(node);
         this.lvl = level;
         this.sel = selectorFromNode(node);
         this.cnt = 0;
-        this.filter = nodeToCosmeticFilterMap.get(node);
+        this.filter = roRedNodes.get(node);
     };
 
-    var domNodeFactory = function(level, node) {
+    const domNodeFactory = function(level, node) {
         var localName = node.localName;
-        if ( skipTagNames.hasOwnProperty(localName) ) {
-            return null;
-        }
+        if ( skipTagNames.has(localName) ) { return null; }
         // skip uBlock's own nodes
-        if ( node.classList.contains(sessionId) ) {
-            return null;
-        }
+        if ( node.classList.contains(sessionId) ) { return null; }
         if ( level === 0 && localName === 'body' ) {
             return new DomRoot();
         }
@@ -252,10 +244,10 @@ var domLayout = (function() {
 
     // Collect layout data.
 
-    var getLayoutData = function() {
+    const getLayoutData = function() {
         var layout = [];
         var stack = [];
-        var node = document.body;
+        var node = document.documentElement;
         var domNode;
         var lvl = 0;
 
@@ -288,7 +280,7 @@ var domLayout = (function() {
 
     // Descendant count for each node.
 
-    var patchLayoutData = function(layout) {
+    const patchLayoutData = function(layout) {
         var stack = [], ptr;
         var lvl = 0;
         var domNode, cnt;
@@ -319,37 +311,31 @@ var domLayout = (function() {
         return layout;
     };
 
-    // Track and report mutations to the DOM
+    // Track and report mutations of the DOM
 
     var mutationObserver = null;
-    var mutationTimer = null;
+    var mutationTimer;
     var addedNodelists = [];
     var removedNodelist = [];
-    var journalEntries = [];
-    var journalNodes = Object.create(null);
 
-    var previousElementSiblingId = function(node) {
+    const previousElementSiblingId = function(node) {
         var sibling = node;
         for (;;) {
             sibling = sibling.previousElementSibling;
-            if ( sibling === null ) {
-                return null;
-            }
-            if ( skipTagNames.hasOwnProperty(sibling.localName) ) {
-                continue;
-            }
+            if ( sibling === null ) { return null; }
+            if ( skipTagNames.has(sibling.localName) ) { continue; }
             return nodeToIdMap.get(sibling);
         }
     };
 
-    var journalFromBranch = function(root, added) {
+    const journalFromBranch = function(root, newNodes, newNodeToIdMap) {
         var domNode;
         var node = root.firstElementChild;
         while ( node !== null ) {
             domNode = domNodeFactory(undefined, node);
             if ( domNode !== null ) {
-                journalNodes[domNode.nid] = domNode;
-                added.push(node);
+                newNodeToIdMap.set(domNode.nid, domNode);
+                newNodes.push(node);
             }
             // down
             if ( node.firstElementChild !== null ) {
@@ -363,9 +349,7 @@ var domLayout = (function() {
             }
             // up then right
             for (;;) {
-                if ( node.parentElement === root ) {
-                    return;
-                }
+                if ( node.parentElement === root ) { return; }
                 node = node.parentElement;
                 if ( node.nextElementSibling !== null ) {
                     node = node.nextElementSibling;
@@ -375,52 +359,35 @@ var domLayout = (function() {
         }
     };
 
-    var journalFromMutations = function() {
-        mutationTimer = null;
-        if ( mutationObserver === null ) {
-            addedNodelists = [];
-            removedNodelist = [];
-            return;
-        }
-
-        var i, m, nodelist, j, n, node, domNode, nid;
+    const journalFromMutations = function() {
+        var nodelist, node, domNode, nid;
+        mutationTimer = undefined;
 
         // This is used to temporarily hold all added nodes, before resolving
         // their node id and relative position.
-        var added = [];
+        var newNodes = [];
+        var journalEntries = [];
+        var newNodeToIdMap = new Map();
 
-        for ( i = 0, m = addedNodelists.length; i < m; i++ ) {
-            nodelist = addedNodelists[i];
-            for ( j = 0, n = nodelist.length; j < n; j++ ) {
-                node = nodelist[j];
-                if ( node.nodeType !== 1 ) {
-                    continue;
-                }
-                // I don't think this can ever happen
-                if ( node.parentElement === null ) {
-                    continue;
-                }
+        for ( nodelist of addedNodelists ) {
+            for ( node of nodelist ) {
+                if ( node.nodeType !== 1 ) { continue; }
+                if ( node.parentElement === null ) { continue; }
                 cosmeticFilterMapper.incremental(node);
                 domNode = domNodeFactory(undefined, node);
                 if ( domNode !== null ) {
-                    journalNodes[domNode.nid] = domNode;
-                    added.push(node);
+                    newNodeToIdMap.set(domNode.nid, domNode);
+                    newNodes.push(node);
                 }
-                journalFromBranch(node, added);
+                journalFromBranch(node, newNodes, newNodeToIdMap);
             }
         }
         addedNodelists = [];
-        for ( i = 0, m = removedNodelist.length; i < m; i++ ) {
-            nodelist = removedNodelist[i];
-            for ( j = 0, n = nodelist.length; j < n; j++ ) {
-                node = nodelist[j];
-                if ( node.nodeType !== 1 ) {
-                    continue;
-                }
+        for ( nodelist of removedNodelist ) {
+            for ( node of nodelist ) {
+                if ( node.nodeType !== 1 ) { continue; }
                 nid = nodeToIdMap.get(node);
-                if ( nid === undefined ) {
-                    continue;
-                }
+                if ( nid === undefined ) { continue; }
                 journalEntries.push({
                     what: -1,
                     nid: nid
@@ -428,8 +395,7 @@ var domLayout = (function() {
             }
         }
         removedNodelist = [];
-        for ( i = 0, n = added.length; i < n; i++ ) {
-            node = added[i];
+        for ( node of newNodes ) {
             journalEntries.push({
                 what: 1,
                 nid: nodeToIdMap.get(node),
@@ -437,12 +403,20 @@ var domLayout = (function() {
                 l: previousElementSiblingId(node)
             });
         }
+
+        if ( journalEntries.length === 0 ) { return; }
+
+        vAPI.MessagingConnection.sendTo(loggerConnectionId, {
+            what: 'domLayoutIncremental',
+            url: window.location.href,
+            hostname: window.location.hostname,
+            journal: journalEntries,
+            nodes: Array.from(newNodeToIdMap)
+        });
     };
 
-    var onMutationObserved = function(mutationRecords) {
-        var record;
-        for ( var i = 0, n = mutationRecords.length; i < n; i++ ) {
-            record = mutationRecords[i];
+    const onMutationObserved = function(mutationRecords) {
+        for ( var record of mutationRecords ) {
             if ( record.addedNodes.length !== 0 ) {
                 addedNodelists.push(record.addedNodes);
             }
@@ -450,65 +424,37 @@ var domLayout = (function() {
                 removedNodelist.push(record.removedNodes);
             }
         }
-        if ( mutationTimer === null ) {
+        if ( mutationTimer === undefined ) {
             mutationTimer = vAPI.setTimeout(journalFromMutations, 1000);
         }
     };
 
     // API
 
-    var getLayout = function(fingerprint) {
-        if ( fingerprint !== domFingerprint() ) {
-            reset();
-        }
+    const getLayout = function() {
+        cosmeticFilterMapper.reset();
+        mutationObserver = new MutationObserver(onMutationObserved);
+        mutationObserver.observe(document.body, {
+            childList: true,
+            subtree: true
+        });
 
-        var response = {
-            what: 'domLayout',
-            fingerprint: domFingerprint(),
+        return {
+            what: 'domLayoutFull',
             url: window.location.href,
-            hostname: window.location.hostname
+            hostname: window.location.hostname,
+            layout: patchLayoutData(getLayoutData())
         };
-
-        if ( document.readyState !== 'complete' ) {
-            response.status = 'busy';
-            return response;
-        }
-
-        // No mutation observer means we need to send full layout
-        if ( mutationObserver === null ) {
-            cosmeticFilterMapper.reset();
-            mutationObserver = new MutationObserver(onMutationObserved);
-            mutationObserver.observe(document.body, {
-                childList: true,
-                subtree: true
-            });
-            response.status = 'full';
-            response.layout = patchLayoutData(getLayoutData());
-            return response;
-        }
-
-        // Incremental layout
-        if ( journalEntries.length !== 0 ) {
-            response.status = 'incremental';
-            response.journal = journalEntries;
-            response.nodes = journalNodes;
-            journalEntries = [];
-            journalNodes = Object.create(null);
-            return response;
-        }
-
-        response.status = 'nochange';
-        return response;
     };
 
-    var reset = function() {
+    const reset = function() {
         shutdown();
     };
 
-    var shutdown = function() {
-        if ( mutationTimer !== null ) {
+    const shutdown = function() {
+        if ( mutationTimer !== undefined ) {
             clearTimeout(mutationTimer);
-            mutationTimer = null;
+            mutationTimer = undefined;
         }
         if ( mutationObserver !== null ) {
             mutationObserver.disconnect();
@@ -516,8 +462,6 @@ var domLayout = (function() {
         }
         addedNodelists = [];
         removedNodelist = [];
-        journalEntries = [];
-        journalNodes = Object.create(null);
         nodeToIdMap = new WeakMap();
     };
 
@@ -536,7 +480,7 @@ var domLayout = (function() {
 // For browsers not supporting `:scope`, it's not the end of the world: the
 // suggested CSS selectors may just end up being more verbose.
 
-var cssScope = ':scope > ';
+let cssScope = ':scope > ';
 try {
     document.querySelector(':scope *');
 } catch (e) {
@@ -545,137 +489,7 @@ try {
 
 /******************************************************************************/
 
-var cosmeticFilterFromEntries = function(entries) {
-    var out = [];
-    var entry, i = entries.length;
-    while ( i-- ) {
-        entry = entries[i];
-        out.push(cosmeticFilterFromTarget(entry.nid, entry.selector));
-    }
-    return out;
-};
-
-/******************************************************************************/
-
-// Extract the best possible cosmetic filter, i.e. as specific as possible.
-
-var cosmeticFilterFromNode = function(elem) {
-    var tagName = elem.localName;
-    var prefix = '';
-    var suffix = [];
-    var v, i;
-
-    // Id
-    v = typeof elem.id === 'string' && cssEscape(elem.id);
-    if ( v ) {
-        suffix.push('#', v);
-    }
-
-    // Class(es)
-    if ( suffix.length === 0 ) {
-        v = elem.classList;
-        if ( v ) {
-            i = v.length || 0;
-            while ( i-- ) {
-                suffix.push('.' + cssEscape(v.item(i)));
-            }
-        }
-    }
-
-    // Tag name
-    if ( suffix.length === 0 ) {
-        prefix = tagName;
-    }
-
-    // Attributes (depends on tag name)
-    var attributes = [], attr;
-    switch ( tagName ) {
-    case 'a':
-        v = elem.getAttribute('href');
-        if ( v ) {
-            v = v.replace(/\?.*$/, '');
-            if ( v.length ) {
-                attributes.push({ k: 'href', v: v });
-            }
-        }
-        break;
-    case 'img':
-        v = elem.getAttribute('alt');
-        if ( v && v.length !== 0 ) {
-            attributes.push({ k: 'alt', v: v });
-        }
-        break;
-    default:
-        break;
-    }
-    while ( (attr = attributes.pop()) ) {
-        if ( attr.v.length === 0 ) {
-            continue;
-        }
-        suffix.push('[', attr.k, '="', cssEscape(attr.v, true), '"]');
-    }
-
-    var selector = prefix + suffix.join('');
-
-    // https://github.com/chrisaljoudi/uBlock/issues/637
-    // If the selector is still ambiguous at this point, further narrow using
-    // `nth-of-type`. It is preferable to use `nth-of-type` as opposed to
-    // `nth-child`, as `nth-of-type` is less volatile.
-    var parent = elem.parentElement;
-    if ( elementsFromSelector(cssScope + selector, parent).length > 1 ) {
-        i = 1;
-        while ( elem.previousElementSibling !== null ) {
-            elem = elem.previousElementSibling;
-            if ( elem.localName !== tagName ) {
-                continue;
-            }
-            i++;
-        }
-        selector += ':nth-of-type(' + i + ')';
-    }
-
-    return selector;
-};
-
-/******************************************************************************/
-
-var cosmeticFilterFromTarget = function(nid, coarseSelector) {
-    var elems = elementsFromSelector(coarseSelector);
-    var target = null;
-    var i = elems.length;
-    while ( i-- ) {
-        if ( nodeToIdMap.get(elems[i]) === nid ) {
-            target = elems[i];
-            break;
-        }
-    }
-    if ( target === null ) {
-        return coarseSelector;
-    }
-    // Find the most concise selector from the target node
-    var segments = [], segment;
-    var node = target;
-    while ( node !== document.body ) {
-        segment = cosmeticFilterFromNode(node);
-        segments.unshift(segment);
-        if ( segment.charAt(0) === '#' ) {
-            break;
-        }
-        node = node.parentElement;
-    }
-    var fineSelector = segments.join(' > ');
-    if ( fineSelector.charAt(0) === '#' ) {
-        return fineSelector;
-    }
-    if ( fineSelector.charAt(0) === '.' && elementsFromSelector(fineSelector).length === 1 ) {
-        return fineSelector;
-    }
-    return 'body > ' + fineSelector;
-};
-
-/******************************************************************************/
-
-var cosmeticFilterMapper = (function() {
+const cosmeticFilterMapper = (function() {
     // https://github.com/gorhill/uBlock/issues/546
     var matchesFnName;
     if ( typeof document.body.matches === 'function' ) {
@@ -686,90 +500,58 @@ var cosmeticFilterMapper = (function() {
         matchesFnName = 'webkitMatchesSelector';
     }
 
-    // Why the call to hideNode()?
-    //   Not all target nodes have necessarily been force-hidden,
-    //   do it now so that the inspector does not unhide these
-    //   nodes when disabling style tags.
-    var nodesFromStyleTag = function(rootNode) {
-        var filterMap = nodeToCosmeticFilterMap,
-            selectors, selector,
-            nodes, node,
-            i, j;
+    const nodesFromStyleTag = function(rootNode) {
+        const filterMap = roRedNodes;
+        const details = vAPI.domFilterer.getAllSelectors();
 
-        // CSS-based selectors: simple one.
-        selectors = vAPI.domFilterer.job2._0;
-        i = selectors.length;
-        while ( i-- ) {
-            selector = selectors[i];
-            if ( filterMap.has(rootNode) === false && rootNode[matchesFnName](selector) ) {
-                filterMap.set(rootNode, selector);
-            }
-            nodes = rootNode.querySelectorAll(selector);
-            j = nodes.length;
-            while ( j-- ) {
-                node = nodes[j];
-                if ( filterMap.has(node) === false ) {
-                    filterMap.set(node, selector);
+        // Declarative selectors.
+        for ( const entry of (details.declarative || []) ) {
+            for ( const selector of entry[0].split(',\n') ) {
+                let canonical = selector;
+                let nodes;
+                if ( entry[1] !== vAPI.hideStyle ) {
+                    canonical += ':style(' + entry[1] + ')';
                 }
-            }
-        }
-    
-        // CSS-based selectors: complex one (must query from doc root).
-        selectors = vAPI.domFilterer.job3._0;
-        i = selectors.length;
-        while ( i-- ) {
-            selector = selectors[i];
-            nodes = document.querySelectorAll(selector);
-            j = nodes.length;
-            while ( j-- ) {
-                node = nodes[j];
-                if ( filterMap.has(node) === false ) {
-                    filterMap.set(node, selector);
+                if ( reHasCSSCombinators.test(selector) ) {
+                    nodes = document.querySelectorAll(selector);
+                } else {
+                    if (
+                        filterMap.has(rootNode) === false &&
+                        rootNode[matchesFnName](selector)
+                    ) {
+                        filterMap.set(rootNode, canonical);
+                    }
+                    nodes = rootNode.querySelectorAll(selector);
+                }
+                for ( const node of nodes ) {
+                    if ( filterMap.has(node) === false ) {
+                        filterMap.set(node, canonical);
+                    }
                 }
             }
         }
 
-        // Non-CSS selectors.
-        var runJobCallback = function(node, job) {
-            if ( filterMap.has(node) === false ) {
-                filterMap.set(node, job.raw);
+        // Procedural selectors.
+        for ( const entry of (details.procedural || []) ) {
+            const nodes = entry.exec();
+            for ( const node of nodes ) {
+                // Upgrade declarative selector to procedural one
+                filterMap.set(node, entry.raw);
             }
-        };
-        for ( i = 4; i < vAPI.domFilterer.jobQueue.length; i++ ) {
-            vAPI.domFilterer.runJob(vAPI.domFilterer.jobQueue[i], runJobCallback);
         }
     };
 
-    var incremental = function(rootNode) {
-        var styleTags = vAPI.domFilterer.styleTags || [];
-        var styleTag;
-        var i = styleTags.length;
-        while ( i-- ) {
-            styleTag = styleTags[i];
-            if ( styleTag.sheet !== null ) {
-                styleTag.sheet.disabled = true;
-                styleTag[vAPI.sessionId] = true;
-            }
-        }
+    const incremental = function(rootNode) {
         nodesFromStyleTag(rootNode);
     };
 
-    var reset = function() {
-        nodeToCosmeticFilterMap = new WeakMap();
+    const reset = function() {
+        roRedNodes.clear();
         incremental(document.documentElement);
     };
 
-    var shutdown = function() {
-        var styleTags = vAPI.domFilterer.styleTags || [];
-        var styleTag;
-        var i = styleTags.length;
-        while ( i-- ) {
-            styleTag = styleTags[i];
-            if ( styleTag.sheet !== null ) {
-                styleTag.sheet.disabled = false;
-                styleTag[vAPI.sessionId] = undefined;
-            }
-        }
+    const shutdown = function() {
+        vAPI.domFilterer.toggle(true);
     };
 
     return {
@@ -781,30 +563,32 @@ var cosmeticFilterMapper = (function() {
 
 /******************************************************************************/
 
-var elementsFromSelector = function(selector, context) {
+const elementsFromSelector = function(selector, context) {
     if ( !context ) {
         context = document;
     }
-    var out;
     if ( selector.indexOf(':') !== -1 ) {
-        out = elementsFromSpecialSelector(selector);
-        if ( out !== undefined ) {
-            return out;
-        }
+        const out = elementsFromSpecialSelector(selector);
+        if ( out !== undefined ) { return out; }
     }
     // plain CSS selector
     try {
-        out = context.querySelectorAll(selector);
+        return context.querySelectorAll(selector);
     } catch (ex) {
     }
-    return out || [];
+    return [];
 };
 
-var elementsFromSpecialSelector = function(selector) {
+const elementsFromSpecialSelector = function(selector) {
     var out = [], i;
     var matches = /^(.+?):has\((.+?)\)$/.exec(selector);
     if ( matches !== null ) {
-        var nodes = document.querySelectorAll(matches[1]);
+        var nodes;
+        try {
+            nodes = document.querySelectorAll(matches[1]);
+        } catch(ex) {
+            nodes = [];
+        }
         i = nodes.length;
         while ( i-- ) {
             var node = nodes[i];
@@ -816,143 +600,150 @@ var elementsFromSpecialSelector = function(selector) {
     }
 
     matches = /^:xpath\((.+?)\)$/.exec(selector);
-    if ( matches !== null ) {
-        var xpr = document.evaluate(
-            matches[1],
-            document,
-            null,
-            XPathResult.UNORDERED_NODE_SNAPSHOT_TYPE,
-            null
-        );
-        i = xpr.snapshotLength;
-        while ( i-- ) {
-            out.push(xpr.snapshotItem(i));
-        }
-        return out;
-    }
-};
-
-/******************************************************************************/
-
-var highlightElements = function(scrollTo) {
-    var wv = pickerRoot.contentWindow.innerWidth;
-    var hv = pickerRoot.contentWindow.innerHeight;
-    var ocean = ['M0 0h' + wv + 'v' + hv + 'h-' + wv, 'z'], islands;
-    var elems, elem, rect, poly;
-    var xl, xr, yt, yb, w, h, ws;
-    var xlu = Number.MAX_VALUE, xru = 0, ytu = Number.MAX_VALUE, ybu = 0;
-    var lists = highlightedElementLists;
-
-    for ( var i = 0; i < lists.length; i++ ) {
-        elems = lists[i];
-        islands = [];
-        for ( var j = 0; j < elems.length; j++ ) {
-            elem = elems[j];
-            if ( elem === pickerRoot ) {
-                continue;
-            }
-            if ( typeof elem.getBoundingClientRect !== 'function' ) {
-                continue;
-            }
-
-            rect = elem.getBoundingClientRect();
-            xl = rect.left;
-            xr = rect.right;
-            w = rect.width;
-            yt = rect.top;
-            yb = rect.bottom;
-            h = rect.height;
-
-            ws = w.toFixed(1);
-            poly = 'M' + xl.toFixed(1) + ' ' + yt.toFixed(1) +
-                   'h' + ws +
-                   'v' + h.toFixed(1) +
-                   'h-' + ws +
-                   'z';
-            ocean.push(poly);
-            islands.push(poly);
-
-            if ( !scrollTo ) {
-                continue;
-            }
-
-            if ( xl < xlu ) { xlu = xl; }
-            if ( xr > xru ) { xru = xr; }
-            if ( yt < ytu ) { ytu = yt; }
-            if ( yb > ybu ) { ybu = yb; }
-        }
-        svgRoot.children[i+1].setAttribute('d', islands.join('') || 'M0 0');
-    }
-
-    svgRoot.firstElementChild.setAttribute('d', ocean.join(''));
-
-    if ( !scrollTo ) {
-        return;
-    }
-
-    // Highlighted area completely within viewport
-    if ( xlu >= 0 && xru <= wv && ytu >= 0 && ybu <= hv ) {
-        return;
-    }
-
-    var dx = 0, dy = 0;
-
-    if ( xru > wv ) {
-        dx = xru - wv;
-        xlu -= dx;
-    }
-    if ( xlu <  0 ) {
-        dx += xlu;
-    }
-    if ( ybu > hv ) {
-        dy = ybu - hv;
-        ytu -= dy;
-    }
-    if ( ytu <  0 ) {
-        dy += ytu;
-    }
-
-    if ( dx !== 0 || dy !== 0 ) {
-        window.scrollBy(dx, dy);
-    }
-};
-
-/******************************************************************************/
-
-var onScrolled = function() {
-    highlightElements();
-};
-
-/******************************************************************************/
-
-var resetToggledNodes = function() {
-    for ( var entry of toggledNodes ) {
-        if ( entry[1].show ) {
-            showNode(entry[0], entry[1].v1, entry[1].v2);
-        } else {
-            hideNode(entry[0]);
-        }
-    }
-    toggledNodes.clear();
-};
-
-/******************************************************************************/
-
-var forgetToggledNodes = function() {
-    toggledNodes.clear();
-};
-
-/******************************************************************************/
-
-var selectNodes = function(selector, nid) {
-    var nodes = elementsFromSelector(selector);
-    if ( nid === '' ) {
-        return nodes;
-    }
-    var i = nodes.length;
+    if ( matches === null ) { return; }
+    const xpr = document.evaluate(
+        matches[1],
+        document,
+        null,
+        XPathResult.UNORDERED_NODE_SNAPSHOT_TYPE,
+        null
+    );
+    i = xpr.snapshotLength;
     while ( i-- ) {
-        if ( nodeToIdMap.get(nodes[i]) === nid ) {
-            return [nodes[i]];
+        out.push(xpr.snapshotItem(i));
+    }
+    return out;
+};
+
+/******************************************************************************/
+
+const getSvgRootChildren = function() {
+    if ( svgRoot.children ) {
+        return svgRoot.children;
+    } else {
+        const childNodes = Array.prototype.slice.apply(svgRoot.childNodes);
+        return childNodes.filter(function(node) {
+            return node.nodeType === Node.ELEMENT_NODE;
+        });
+    }
+};
+
+const highlightElements = function() {
+    var islands;
+    var elem, rect, poly;
+    var xl, xr, yt, yb, w, h, ws;
+    var svgRootChildren = getSvgRootChildren();
+
+    islands = [];
+    for ( elem of rwRedNodes.keys() ) {
+        if ( elem === pickerRoot ) { continue; }
+        if ( rwGreenNodes.has(elem) ) { continue; }
+        if ( typeof elem.getBoundingClientRect !== 'function' ) { continue; }
+        rect = elem.getBoundingClientRect();
+        xl = rect.left;
+        xr = rect.right;
+        w = rect.width;
+        yt = rect.top;
+        yb = rect.bottom;
+        h = rect.height;
+        ws = w.toFixed(1);
+        poly = 'M' + xl.toFixed(1) + ' ' + yt.toFixed(1) +
+               'h' + ws +
+               'v' + h.toFixed(1) +
+               'h-' + ws +
+               'z';
+        islands.push(poly);
+    }
+    svgRootChildren[0].setAttribute('d', islands.join('') || 'M0 0');
+
+    islands = [];
+    for ( elem of rwGreenNodes ) {
+        if ( typeof elem.getBoundingClientRect !== 'function' ) { continue; }
+        rect = elem.getBoundingClientRect();
+        xl = rect.left;
+        xr = rect.right;
+        w = rect.width;
+        yt = rect.top;
+        yb = rect.bottom;
+        h = rect.height;
+        ws = w.toFixed(1);
+        poly = 'M' + xl.toFixed(1) + ' ' + yt.toFixed(1) +
+               'h' + ws +
+               'v' + h.toFixed(1) +
+               'h-' + ws +
+               'z';
+        islands.push(poly);
+    }
+    svgRootChildren[1].setAttribute('d', islands.join('') || 'M0 0');
+
+    islands = [];
+    for ( elem of roRedNodes.keys() ) {
+        if ( elem === pickerRoot ) { continue; }
+        if ( rwGreenNodes.has(elem) ) { continue; }
+        if ( typeof elem.getBoundingClientRect !== 'function' ) { continue; }
+        rect = elem.getBoundingClientRect();
+        xl = rect.left;
+        xr = rect.right;
+        w = rect.width;
+        yt = rect.top;
+        yb = rect.bottom;
+        h = rect.height;
+        ws = w.toFixed(1);
+        poly = 'M' + xl.toFixed(1) + ' ' + yt.toFixed(1) +
+               'h' + ws +
+               'v' + h.toFixed(1) +
+               'h-' + ws +
+               'z';
+        islands.push(poly);
+    }
+    svgRootChildren[2].setAttribute('d', islands.join('') || 'M0 0');
+
+    islands = [];
+    for ( elem of blueNodes ) {
+        if ( elem === pickerRoot ) { continue; }
+        if ( typeof elem.getBoundingClientRect !== 'function' ) { continue; }
+        rect = elem.getBoundingClientRect();
+        xl = rect.left;
+        xr = rect.right;
+        w = rect.width;
+        yt = rect.top;
+        yb = rect.bottom;
+        h = rect.height;
+        ws = w.toFixed(1);
+        poly = 'M' + xl.toFixed(1) + ' ' + yt.toFixed(1) +
+               'h' + ws +
+               'v' + h.toFixed(1) +
+               'h-' + ws +
+               'z';
+        islands.push(poly);
+    }
+    svgRootChildren[3].setAttribute('d', islands.join('') || 'M0 0');
+};
+
+/******************************************************************************/
+
+const onScrolled = (function() {
+    let buffered = false;
+    const timerHandler = function() {
+        buffered = false;
+        highlightElements();
+    };
+    return function() {
+        if ( buffered === false ) {
+            window.requestAnimationFrame(timerHandler);
+            buffered = true;
+        }
+    };
+})();
+
+/******************************************************************************/
+
+const selectNodes = function(selector, nid) {
+    const nodes = elementsFromSelector(selector);
+    if ( nid === '' ) { return nodes; }
+    for ( const node of nodes ) {
+        if ( nodeToIdMap.get(node) === nid ) {
+            return [ node ];
         }
     }
     return [];
@@ -960,154 +751,125 @@ var selectNodes = function(selector, nid) {
 
 /******************************************************************************/
 
-var shutdown = function() {
+const nodesFromFilter = function(selector) {
+    const out = [];
+    for ( const entry of roRedNodes ) {
+        if ( entry[1] === selector ) {
+            out.push(entry[0]);
+        }
+    }
+    return out;
+};
+
+/******************************************************************************/
+
+const toggleExceptions = function(nodes, targetState) {
+    for ( const node of nodes ) {
+        if ( targetState ) {
+            rwGreenNodes.add(node);
+        } else {
+            rwGreenNodes.delete(node);
+        }
+    }
+};
+
+const toggleFilter = function(nodes, targetState) {
+    for ( const node of nodes ) {
+        if ( targetState ) {
+            rwRedNodes.delete(node);
+        } else {
+            rwRedNodes.add(node);
+        }
+    }
+};
+
+const resetToggledNodes = function() {
+    rwGreenNodes.clear();
+    rwRedNodes.clear();
+};
+
+/******************************************************************************/
+
+const start = function() {
+    const onReady = function(ev) {
+        if ( ev ) {
+            document.removeEventListener(ev.type, onReady);
+        }
+        vAPI.MessagingConnection.sendTo(loggerConnectionId, domLayout.get());
+        vAPI.domFilterer.toggle(false, highlightElements);
+    };
+    if ( document.readyState === 'loading' ) {
+        document.addEventListener('DOMContentLoaded', onReady);
+    } else {
+        onReady();
+    }
+};
+
+/******************************************************************************/
+
+const shutdown = function() {
     cosmeticFilterMapper.shutdown();
-    resetToggledNodes();
     domLayout.shutdown();
-    vAPI.messaging.removeAllChannelListeners('domInspector');
+    vAPI.MessagingConnection.disconnectFrom(loggerConnectionId);
     window.removeEventListener('scroll', onScrolled, true);
     document.documentElement.removeChild(pickerRoot);
     pickerRoot = svgRoot = null;
-    highlightedElementLists = [ [], [], [] ];
-};
-
-/******************************************************************************/
-
-// original, target = what to do
-//      any,    any = restore saved display property
-//      any, hidden = set display to `none`, remember original state
-//   hidden,    any = remove display property, don't remember original state
-//   hidden, hidden = set display to `none`
-
-var toggleNodes = function(nodes, originalState, targetState) {
-    var i = nodes.length;
-    if ( i === 0 ) {
-        return;
-    }
-    var node, details;
-    while ( i-- ) {
-        node = nodes[i];
-        // originally visible node
-        if ( originalState ) {
-            // unhide visible node
-            if ( targetState ) {
-                details = toggledNodes.get(node) || {};
-                showNode(node, details.v1, details.v2);
-                toggledNodes.delete(node);
-            }
-            // hide visible node
-            else {
-                toggledNodes.set(node, {
-                    show: true,
-                    v1: node.style.getPropertyValue('display') || '',
-                    v2: node.style.getPropertyPriority('display') || ''
-                });
-                hideNode(node);
-            }
-        }
-        // originally hidden node
-        else {
-            // show hidden node
-            if ( targetState ) {
-                toggledNodes.set(node, { show: false });
-                showNode(node, 'initial', 'important');
-            }
-            // hide hidden node
-            else {
-                hideNode(node);
-                toggledNodes.delete(node);
-            }
-        }
-    }
-};
-
-// https://www.youtube.com/watch?v=L5jRewnxSBY
-
-/******************************************************************************/
-
-var showNode = function(node, v1, v2) {
-    vAPI.domFilterer.showNode(node);
-    if ( !v1 ) {
-        node.style.removeProperty('display');
-    } else {
-        node.style.setProperty('display', v1, v2);
-    }
-};
-
-/******************************************************************************/
-
-var hideNode = function(node) {
-    vAPI.domFilterer.unshowNode(node);
 };
 
 /******************************************************************************/
 /******************************************************************************/
 
-var onMessage = function(request) {
-    var response;
+const onMessage = function(request) {
+    var response,
+        nodes;
 
     switch ( request.what ) {
     case 'commitFilters':
-        resetToggledNodes();
-        toggleNodes(selectNodes(request.hide, ''), true, false);
-        toggleNodes(selectNodes(request.unhide, ''), false, true);
-        forgetToggledNodes();
-        highlightedElementLists = [ [], [], [] ];
         highlightElements();
         break;
 
-    case 'cookFilters':
-        response = cosmeticFilterFromEntries(request.entries);
-        break;
-
     case 'domLayout':
-        response = domLayout.get(request.fingerprint);
+        response = domLayout.get();
+        highlightElements();
         break;
 
     case 'highlightMode':
-        svgRoot.classList.toggle('invert', request.invert);
+        //svgRoot.classList.toggle('invert', request.invert);
         break;
 
     case 'highlightOne':
-        highlightedElementLists[0] = selectNodes(request.selector, request.nid);
-        highlightElements(request.scrollTo);
+        blueNodes = selectNodes(request.selector, request.nid);
+        highlightElements();
         break;
 
     case 'resetToggledNodes':
         resetToggledNodes();
+        highlightElements();
         break;
 
     case 'showCommitted':
-        resetToggledNodes();
-        highlightedElementLists[0] = [];
-        highlightedElementLists[1] = selectNodes(request.hide, '');
-        highlightedElementLists[2] = selectNodes(request.unhide, '');
-        toggleNodes(highlightedElementLists[2], false, true);
-        highlightElements(true);
+        blueNodes = [];
+        // TODO: show only the new filters and exceptions.
+        highlightElements();
         break;
 
     case 'showInteractive':
-        resetToggledNodes();
-        toggleNodes(selectNodes(request.hide, ''), true, false);
-        toggleNodes(selectNodes(request.unhide, ''), false, true);
-        highlightedElementLists = [ [], [], [] ];
+        blueNodes = [];
         highlightElements();
         break;
 
     case 'toggleFilter':
-        highlightedElementLists[0] = selectNodes(request.filter, request.nid);
-        toggleNodes(highlightedElementLists[0], request.original, request.target);
-        highlightElements(true);
+        nodes = selectNodes(request.selector, request.nid);
+        if ( nodes.length !== 0 ) { nodes[0].scrollIntoView(); }
+        toggleExceptions(nodesFromFilter(request.filter), request.target);
+        highlightElements();
         break;
 
     case 'toggleNodes':
-        highlightedElementLists[0] = selectNodes(request.selector, request.nid);
-        toggleNodes(highlightedElementLists[0], request.original, request.target);
-        highlightElements(true);
-        break;
-
-    case 'shutdown':
-        shutdown();
+        nodes = selectNodes(request.selector, request.nid);
+        if ( nodes.length !== 0 ) { nodes[0].scrollIntoView(); }
+        toggleFilter(nodes, request.target);
+        highlightElements();
         break;
 
     default:
@@ -1120,6 +882,75 @@ var onMessage = function(request) {
 /******************************************************************************/
 
 // Install DOM inspector widget
+
+const bootstrap = function(ev) {
+    if ( ev ) {
+        pickerRoot.removeEventListener(ev.type, bootstrap);
+    }
+    const pickerDoc = ev.target.contentDocument;
+
+    const style = pickerDoc.createElement('style');
+    style.textContent = [
+        'body {',
+            'background-color: transparent;',
+        '}',
+        'svg {',
+            'height: 100%;',
+            'left: 0;',
+            'position: fixed;',
+            'top: 0;',
+            'width: 100%;',
+        '}',
+        'svg > path:nth-of-type(1) {',
+            'fill: rgba(255,0,0,0.2);',
+            'stroke: #F00;',
+        '}',
+        'svg > path:nth-of-type(2) {',
+            'fill: rgba(0,255,0,0.2);',
+            'stroke: #0F0;',
+        '}',
+        'svg > path:nth-of-type(3) {',
+            'fill: rgba(255,0,0,0.2);',
+            'stroke: #F00;',
+        '}',
+        'svg > path:nth-of-type(4) {',
+            'fill: rgba(0,0,255,0.1);',
+            'stroke: #FFF;',
+            'stroke-width: 0.5px;',
+        '}',
+        ''
+    ].join('\n');
+    pickerDoc.body.appendChild(style);
+
+    svgRoot = pickerDoc.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svgRoot.appendChild(pickerDoc.createElementNS('http://www.w3.org/2000/svg', 'path'));
+    svgRoot.appendChild(pickerDoc.createElementNS('http://www.w3.org/2000/svg', 'path'));
+    svgRoot.appendChild(pickerDoc.createElementNS('http://www.w3.org/2000/svg', 'path'));
+    svgRoot.appendChild(pickerDoc.createElementNS('http://www.w3.org/2000/svg', 'path'));
+    pickerDoc.body.appendChild(svgRoot);
+
+    window.addEventListener('scroll', onScrolled, true);
+
+    // Dynamically add direct connection abilities so that we can establish
+    // a direct, fast messaging connection to the logger.
+    vAPI.messaging.extend().then(extended => {
+        if ( extended !== true ) { return; }
+        vAPI.MessagingConnection.connectTo('domInspector', 'loggerUI', msg => {
+            switch ( msg.what ) {
+            case 'connectionAccepted':
+                loggerConnectionId = msg.id;
+                start();
+                break;
+            case 'connectionBroken':
+                shutdown();
+                break;
+            case 'connectionMessage':
+                onMessage(msg.payload);
+                break;
+            }
+        });
+    });
+};
 
 pickerRoot = document.createElement('iframe');
 pickerRoot.classList.add(sessionId);
@@ -1137,6 +968,7 @@ pickerRoot.style.cssText = [
     'position: fixed',
     'outline: 0',
     'padding: 0',
+    'pointer-events:none;',
     'top: 0',
     'visibility: visible',
     'width: 100%',
@@ -1144,63 +976,29 @@ pickerRoot.style.cssText = [
     ''
 ].join(' !important;\n');
 
-pickerRoot.onload = function() {
-    pickerRoot.onload = null;
-    var pickerDoc = this.contentDocument;
-
-    var style = pickerDoc.createElement('style');
-    style.textContent = [
-        'body {',
-            'background-color: transparent;',
-            'cursor: not-allowed;',
-        '}',
-        'svg {',
-            'height: 100%;',
-            'left: 0;',
-            'position: fixed;',
-            'top: 0;',
-            'width: 100%;',
-        '}',
-        'svg > path:first-child {',
-            'fill: rgba(0,0,0,0.75);',
-            'fill-rule: evenodd;',
-        '}',
-        'svg > path:nth-of-type(2) {',
-            'fill: rgba(0,0,255,0.1);',
-            'stroke: #FFF;',
-            'stroke-width: 0.5px;',
-        '}',
-        'svg > path:nth-of-type(3) {',
-            'fill: rgba(255,0,0,0.2);',
-            'stroke: #F00;',
-        '}',
-        'svg > path:nth-of-type(4) {',
-            'fill: rgba(0,255,0,0.2);',
-            'stroke: #0F0;',
-        '}',
-        ''
-    ].join('\n');
-    pickerDoc.body.appendChild(style);
-
-    svgRoot = pickerDoc.createElementNS('http://www.w3.org/2000/svg', 'svg');
-    svgRoot.appendChild(pickerDoc.createElementNS('http://www.w3.org/2000/svg', 'path'));
-    svgRoot.appendChild(pickerDoc.createElementNS('http://www.w3.org/2000/svg', 'path'));
-    svgRoot.appendChild(pickerDoc.createElementNS('http://www.w3.org/2000/svg', 'path'));
-    svgRoot.appendChild(pickerDoc.createElementNS('http://www.w3.org/2000/svg', 'path'));
-    pickerDoc.body.appendChild(svgRoot);
-
-    window.addEventListener('scroll', onScrolled, true);
-
-    highlightElements();
-    cosmeticFilterMapper.reset();
-
-    vAPI.messaging.addChannelListener('domInspector', onMessage);
-};
-
+pickerRoot.addEventListener('load', ev => { bootstrap(ev); });
 document.documentElement.appendChild(pickerRoot);
 
 /******************************************************************************/
 
 })();
 
-/******************************************************************************/
+
+
+
+
+
+
+
+/*******************************************************************************
+
+    DO NOT:
+    - Remove the following code
+    - Add code beyond the following code
+    Reason:
+    - https://github.com/gorhill/uBlock/pull/3721
+    - uBO never uses the return value from injected content scripts
+
+**/
+
+void 0;

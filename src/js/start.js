@@ -1,7 +1,7 @@
 /*******************************************************************************
 
     uBlock Origin - a browser extension to block requests.
-    Copyright (C) 2014-2016 Raymond Hill
+    Copyright (C) 2014-present Raymond Hill
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -19,121 +19,112 @@
     Home: https://github.com/gorhill/uBlock
 */
 
-/* global objectAssign, publicSuffixList */
-
 'use strict';
 
 /******************************************************************************/
 
 // Load all: executed once.
 
-µBlock.restart = (function() {
+(async ( ) => {
+// >>>>> start of private scope
 
-//quickProfiler.start('start.js');
-
-/******************************************************************************/
-
-var µb = µBlock;
+const µb = µBlock;
 
 /******************************************************************************/
 
 vAPI.app.onShutdown = function() {
+    const µb = µBlock;
     µb.staticFilteringReverseLookup.shutdown();
-    µb.assetUpdater.shutdown();
+    µb.assets.updateStop();
     µb.staticNetFilteringEngine.reset();
-    µb.cosmeticFilteringEngine.reset();
+    µb.staticExtFilteringEngine.reset();
     µb.sessionFirewall.reset();
-    µb.permanentFirewall.reset();
     µb.permanentFirewall.reset();
     µb.sessionURLFiltering.reset();
     µb.permanentURLFiltering.reset();
+    µb.sessionSwitches.reset();
+    µb.permanentSwitches.reset();
 };
 
 /******************************************************************************/
 
-// Final initialization steps after all needed assets are in memory.
-// - Initialize internal state with maybe already existing tabs.
-// - Schedule next update operation.
+// This is called only once, when everything has been loaded in memory after
+// the extension was launched. It can be used to inject content scripts
+// in already opened web pages, to remove whatever nuisance could make it to
+// the web pages before uBlock was ready.
+//
+// https://bugzilla.mozilla.org/show_bug.cgi?id=1652925#c19
+//   Mind discarded tabs.
 
-var onAllReady = function() {
-    // https://github.com/chrisaljoudi/uBlock/issues/184
-    // Check for updates not too far in the future.
-    µb.assetUpdater.onStart.addEventListener(µb.updateStartHandler.bind(µb));
-    µb.assetUpdater.onCompleted.addEventListener(µb.updateCompleteHandler.bind(µb));
-    µb.assetUpdater.onAssetUpdated.addEventListener(µb.assetUpdatedHandler.bind(µb));
-    µb.assets.onAssetRemoved.addListener(µb.assetCacheRemovedHandler.bind(µb));
+const initializeTabs = async function() {
+    const manifest = browser.runtime.getManifest();
+    if ( manifest instanceof Object === false ) { return; }
 
-    // Important: remove barrier to remote fetching, this was useful only
-    // for launch time.
-    µb.assets.remoteFetchBarrier -= 1;
-
-    // vAPI.cloud is optional.
-    if ( µb.cloudStorageSupported ) {
-        vAPI.cloud.start([
-            'tpFiltersPane',
-            'myFiltersPane',
-            'myRulesPane',
-            'whitelistPane'
-        ]);
+    const toCheck = [];
+    const tabIds = [];
+    {
+        const checker = { file: 'js/scriptlets/should-inject-contentscript.js' };
+        const tabs = await vAPI.tabs.query({ url: '<all_urls>' });
+        for ( const tab of tabs  ) {
+            if ( tab.discarded === true ) { continue; }
+            const { id, url } = tab;
+            µb.tabContextManager.commit(id, url);
+            µb.bindTabToPageStore(id);
+            // https://github.com/chrisaljoudi/uBlock/issues/129
+            //   Find out whether content scripts need to be injected
+            //   programmatically. This may be necessary for web pages which
+            //   were loaded before uBO launched.
+            toCheck.push(
+                /^https?:\/\//.test(url)
+                    ? vAPI.tabs.executeScript(id, checker) 
+                    : false
+            );
+            tabIds.push(id);
+        }
     }
-
-    //quickProfiler.stop(0);
-
-    µb.contextMenu.update(null);
-    µb.firstInstall = false;
-
-    vAPI.net.onReady();
-};
-
-/******************************************************************************/
-
-// Filtering engines dependencies:
-// - PSL
-
-var onPSLReady = function() {
-    µb.loadFilterLists(onAllReady);
+    const results = await Promise.all(toCheck);
+    for ( let i = 0; i < results.length; i++ ) {
+        const result = results[i];
+        if ( result.length === 0 || result[0] !== true ) { continue; }
+        // Inject declarative content scripts programmatically.
+        for ( const contentScript of manifest.content_scripts ) {
+            for ( const file of contentScript.js ) {
+                vAPI.tabs.executeScript(tabIds[i], {
+                    file: file,
+                    allFrames: contentScript.all_frames,
+                    runAt: contentScript.run_at
+                });
+            }
+        }
+    }
 };
 
 /******************************************************************************/
 
 // To bring older versions up to date
 
-var onVersionReady = function(lastVersion) {
-    // Starting with 1.9.17, non-advanced users can have access to the dynamic
-    // filtering pane in read-only mode. Still, it should not be visible by
-    // default.
-    if ( lastVersion.localeCompare('1.9.17') < 0 ) {
-        if (
-            µb.userSettings.advancedUserEnabled === false &&
-            µb.userSettings.dynamicFilteringEnabled === true
-        ) {
-            µb.userSettings.dynamicFilteringEnabled = false;
-            µb.keyvalSetOne('dynamicFilteringEnabled', false);
-        }
-    }
-    if ( lastVersion !== vAPI.app.version ) {
-        vAPI.storage.set({ version: vAPI.app.version });
-    }
-};
+const onVersionReady = function(lastVersion) {
+    if ( lastVersion === vAPI.app.version ) { return; }
 
-/******************************************************************************/
+    // Since built-in resources may have changed since last version, we
+    // force a reload of all resources.
+    µb.redirectEngine.invalidateResourcesSelfie();
 
-var onSelfieReady = function(selfie) {
-    if ( selfie === null || selfie.magic !== µb.systemSettings.selfieMagic ) {
-        return false;
-    }
-    if ( publicSuffixList.fromSelfie(selfie.publicSuffixList) !== true ) {
-        return false;
-    }
-    if ( selfie.redirectEngine === undefined ) {
-        return false;
+    const lastVersionInt = vAPI.app.intFromVersion(lastVersion);
+    if ( lastVersionInt === 0 ) { return; }
+
+    // https://github.com/LiCybora/NanoDefenderFirefox/issues/196
+    //   Toggle on the blocking of CSP reports by default for Firefox.
+    if (
+        vAPI.webextFlavor.soup.has('firefox') &&
+        lastVersionInt <= 1031003011
+    ) {
+        µb.sessionSwitches.toggle('no-csp-reports', '*', 1);
+        µb.permanentSwitches.toggle('no-csp-reports', '*', 1);
+        µb.saveHostnameSwitches();
     }
 
-    µb.remoteBlacklists = selfie.filterLists;
-    µb.staticNetFilteringEngine.fromSelfie(selfie.staticNetFilteringEngine);
-    µb.redirectEngine.fromSelfie(selfie.redirectEngine);
-    µb.cosmeticFilteringEngine.fromSelfie(selfie.cosmeticFilteringEngine);
-    return true;
+    vAPI.storage.set({ version: vAPI.app.version });
 };
 
 /******************************************************************************/
@@ -143,8 +134,11 @@ var onSelfieReady = function(selfie) {
 // Whitelist parser needs PSL to be ready.
 // gorhill 2014-12-15: not anymore
 
-var onNetWhitelistReady = function(netWhitelistRaw) {
-    µb.netWhitelist = µb.whitelistFromString(netWhitelistRaw);
+const onNetWhitelistReady = function(netWhitelistRaw) {
+    if ( typeof netWhitelistRaw === 'string' ) {
+        netWhitelistRaw = netWhitelistRaw.split('\n');
+    }
+    µb.netWhitelist = µb.whitelistFromArray(netWhitelistRaw);
     µb.netWhitelistModifyTime = Date.now();
 };
 
@@ -152,16 +146,10 @@ var onNetWhitelistReady = function(netWhitelistRaw) {
 
 // User settings are in memory
 
-var onUserSettingsReady = function(fetched) {
-    var userSettings = µb.userSettings;
+const onUserSettingsReady = function(fetched) {
+    const userSettings = µb.userSettings;
 
     fromFetch(userSettings, fetched);
-
-    // https://github.com/chrisaljoudi/uBlock/issues/426
-    // Important: block remote fetching for when loading assets at launch
-    // time.
-    µb.assets.autoUpdate = userSettings.autoUpdate;
-    µb.assets.autoUpdateDelay = µb.updateAssetsEvery;
 
     if ( µb.privacySettingsSupported ) {
         vAPI.browserSettings.set({
@@ -175,143 +163,238 @@ var onUserSettingsReady = function(fetched) {
     µb.sessionFirewall.assign(µb.permanentFirewall);
     µb.permanentURLFiltering.fromString(fetched.urlFilteringString);
     µb.sessionURLFiltering.assign(µb.permanentURLFiltering);
-    µb.hnSwitches.fromString(fetched.hostnameSwitchesString);
-
-    // https://github.com/gorhill/uBlock/issues/1892
-    // For first installation on a battery-powered device, disable generic
-    // cosmetic filtering.
-    if ( µb.firstInstall && vAPI.battery ) {
-        userSettings.ignoreGenericCosmeticFilters = true;
-    }
+    µb.permanentSwitches.fromString(fetched.hostnameSwitchesString);
+    µb.sessionSwitches.assign(µb.permanentSwitches);
 };
 
 /******************************************************************************/
 
-// Housekeeping, as per system setting changes
+// https://bugzilla.mozilla.org/show_bug.cgi?id=1588916
+//   Save magic format numbers into the cache storage itself.
+// https://github.com/uBlockOrigin/uBlock-issues/issues/1365
+//   Wait for removal of invalid cached data to be completed.
 
-var onSystemSettingsReady = function(fetched) {
-    var mustSaveSystemSettings = false;
+const onCacheSettingsReady = async function(fetched) {
     if ( fetched.compiledMagic !== µb.systemSettings.compiledMagic ) {
-        µb.assets.purge(/^cache:\/\/compiled-/);
-        mustSaveSystemSettings = true;
+        µb.compiledFormatChanged = true;
+        µb.selfieIsInvalid = true;
     }
     if ( fetched.selfieMagic !== µb.systemSettings.selfieMagic ) {
-        mustSaveSystemSettings = true;
+        µb.selfieIsInvalid = true;
     }
-    if ( mustSaveSystemSettings ) {
-        fetched.selfie = null;
+    if ( µb.selfieIsInvalid ) {
         µb.selfieManager.destroy();
-        vAPI.storage.set(µb.systemSettings, µb.noopFunc);
+        µb.cacheStorage.set(µb.systemSettings);
     }
 };
 
 /******************************************************************************/
 
-var onFirstFetchReady = function(fetched) {
-    // https://github.com/gorhill/uBlock/issues/747
-    µb.firstInstall = fetched.version === '0.0.0.0';
+const onFirstFetchReady = function(fetched) {
+    // https://github.com/uBlockOrigin/uBlock-issues/issues/507
+    //   Firefox-specific: somehow `fetched` is undefined under certain
+    //   circumstances even though we asked to load with default values.
+    if ( fetched instanceof Object === false ) {
+        fetched = createDefaultProps();
+    }
 
     // Order is important -- do not change:
-    onSystemSettingsReady(fetched);
     fromFetch(µb.localSettings, fetched);
     onUserSettingsReady(fetched);
     fromFetch(µb.restoreBackupSettings, fetched);
     onNetWhitelistReady(fetched.netWhitelist);
     onVersionReady(fetched.version);
-
-    // If we have a selfie, skip loading PSL, filters
-    if ( onSelfieReady(fetched.selfie) ) {
-        onAllReady();
-        return;
-    }
-
-    µb.loadPublicSuffixList(onPSLReady);
 };
 
 /******************************************************************************/
 
-var toFetch = function(from, fetched) {
-    for ( var k in from ) {
-        if ( from.hasOwnProperty(k) === false ) {
-            continue;
-        }
+const toFetch = function(from, fetched) {
+    for ( const k in from ) {
+        if ( from.hasOwnProperty(k) === false ) { continue; }
         fetched[k] = from[k];
     }
 };
 
-var fromFetch = function(to, fetched) {
-    for ( var k in to ) {
-        if ( to.hasOwnProperty(k) === false ) {
-            continue;
-        }
-        if ( fetched.hasOwnProperty(k) === false ) {
-            continue;
-        }
+const fromFetch = function(to, fetched) {
+    for ( const k in to ) {
+        if ( to.hasOwnProperty(k) === false ) { continue; }
+        if ( fetched.hasOwnProperty(k) === false ) { continue; }
         to[k] = fetched[k];
     }
 };
 
-/******************************************************************************/
-
-var onAdminSettingsRestored = function() {
-    // Forbid remote fetching of assets
-    µb.assets.remoteFetchBarrier += 1;
-
-    var fetchableProps = {
-        'compiledMagic': '',
-        'dynamicFilteringString': 'behind-the-scene * 3p noop\nbehind-the-scene * 3p-frame noop',
+const createDefaultProps = function() {
+    const fetchableProps = {
+        'dynamicFilteringString': [
+            'behind-the-scene * * noop',
+            'behind-the-scene * image noop',
+            'behind-the-scene * 3p noop',
+            'behind-the-scene * inline-script noop',
+            'behind-the-scene * 1p-script noop',
+            'behind-the-scene * 3p-script noop',
+            'behind-the-scene * 3p-frame noop',
+        ].join('\n'),
         'urlFilteringString': '',
-        'hostnameSwitchesString': '',
+        'hostnameSwitchesString': [
+            'no-large-media: behind-the-scene false',
+        ].join('\n'),
         'lastRestoreFile': '',
         'lastRestoreTime': 0,
         'lastBackupFile': '',
         'lastBackupTime': 0,
         'netWhitelist': µb.netWhitelistDefault,
-        'selfie': null,
-        'selfieMagic': '',
         'version': '0.0.0.0'
     };
-
+    // https://github.com/LiCybora/NanoDefenderFirefox/issues/196
+    if ( vAPI.webextFlavor.soup.has('firefox') ) {
+        fetchableProps.hostnameSwitchesString += '\nno-csp-reports: * true';
+    }
     toFetch(µb.localSettings, fetchableProps);
     toFetch(µb.userSettings, fetchableProps);
     toFetch(µb.restoreBackupSettings, fetchableProps);
-
-    vAPI.storage.get(fetchableProps, onFirstFetchReady);
+    return fetchableProps;
 };
 
 /******************************************************************************/
 
-µb.hiddenSettings = (function() {
-    var out = objectAssign({}, µb.hiddenSettingsDefault),
-        json = vAPI.localStorage.getItem('hiddenSettings');
-    if ( typeof json === 'string' ) {
-        try {
-            var o = JSON.parse(json);
-            if ( o instanceof Object ) {
-                for ( var k in o ) {
-                    if ( out.hasOwnProperty(k) ) {
-                        out[k] = o[k];
-                    }
-                }
-            }
-        }
-        catch(ex) {
-        }
-    }
-    return out;
-})();
-
-/******************************************************************************/
-
-return function() {
+try {
     // https://github.com/gorhill/uBlock/issues/531
-    µb.restoreAdminSettings(onAdminSettingsRestored);
-};
+    await µb.restoreAdminSettings();
+    log.info(`Admin settings ready ${Date.now()-vAPI.T0} ms after launch`);
 
-/******************************************************************************/
+    await µb.loadHiddenSettings();
+    log.info(`Hidden settings ready ${Date.now()-vAPI.T0} ms after launch`);
 
+    // Maybe override current network listener suspend state
+    if ( µb.hiddenSettings.suspendTabsUntilReady === 'no' ) {
+        vAPI.net.unsuspend(true);
+    } else if ( µb.hiddenSettings.suspendTabsUntilReady === 'yes' ) {
+        vAPI.net.suspend();
+    }
+
+    if ( µb.hiddenSettings.disableWebAssembly !== true ) {
+        µb.staticNetFilteringEngine.enableWASM().then(( ) => {
+            log.info(`WASM modules ready ${Date.now()-vAPI.T0} ms after launch`);
+        });
+    }
+
+    const cacheBackend = await µb.cacheStorage.select(
+        µb.hiddenSettings.cacheStorageAPI
+    );
+    log.info(`Backend storage for cache will be ${cacheBackend}`);
+
+    // https://github.com/uBlockOrigin/uBlock-issues/issues/1365
+    //   Wait for onCacheSettingsReady() to be fully ready.
+    await Promise.all([
+        µb.loadSelectedFilterLists().then(( ) => {
+            log.info(`List selection ready ${Date.now()-vAPI.T0} ms after launch`);
+        }),
+        µb.cacheStorage.get(
+            { compiledMagic: 0, selfieMagic: 0 }
+        ).then(fetched => {
+            log.info(`Cache magic numbers ready ${Date.now()-vAPI.T0} ms after launch`);
+            onCacheSettingsReady(fetched);
+        }),
+        vAPI.storage.get(createDefaultProps()).then(fetched => {
+            log.info(`First fetch ready ${Date.now()-vAPI.T0} ms after launch`);
+            onFirstFetchReady(fetched);
+        }),
+        µb.loadPublicSuffixList().then(( ) => {
+            log.info(`PSL ready ${Date.now()-vAPI.T0} ms after launch`);
+        }),
+    ]);
+} catch (ex) {
+    console.trace(ex);
+}
+
+// Prime the filtering engines before first use.
+µb.staticNetFilteringEngine.prime();
+
+// https://github.com/uBlockOrigin/uBlock-issues/issues/817#issuecomment-565730122
+//   Still try to load filter lists regardless of whether a serious error
+//   occurred in the previous initialization steps.
+let selfieIsValid = false;
+try {
+    selfieIsValid = await µb.selfieManager.load();
+    if ( selfieIsValid === true ) {
+        log.info(`Selfie ready ${Date.now()-vAPI.T0} ms after launch`);
+    }
+} catch (ex) {
+    console.trace(ex);
+}
+if ( selfieIsValid !== true ) {
+    try {
+        await µb.loadFilterLists();
+        log.info(`Filter lists ready ${Date.now()-vAPI.T0} ms after launch`);
+    } catch (ex) {
+        console.trace(ex);
+    }
+}
+
+// Final initialization steps after all needed assets are in memory.
+
+// https://github.com/uBlockOrigin/uBlock-issues/issues/974
+//   This can be used to defer filtering decision-making.
+µb.readyToFilter = true;
+
+// Start network observers.
+µb.webRequest.start();
+
+// Ensure that the resources allocated for decompression purpose (likely
+// large buffers) are garbage-collectable immediately after launch.
+// Otherwise I have observed that it may take quite a while before the
+// garbage collection of these resources kicks in. Relinquishing as soon
+// as possible ensure minimal memory usage baseline.
+µb.lz4Codec.relinquish();
+
+// Initialize internal state with maybe already existing tabs.
+initializeTabs();
+
+// https://github.com/chrisaljoudi/uBlock/issues/184
+//   Check for updates not too far in the future.
+µb.assets.addObserver(µb.assetObserver.bind(µb));
+µb.scheduleAssetUpdater(
+    µb.userSettings.autoUpdate
+        ? µb.hiddenSettings.autoUpdateDelayAfterLaunch * 1000
+        : 0
+);
+
+// Force an update of the context menu according to the currently
+// active tab.
+µb.contextMenu.update();
+
+// Maybe install non-default popup document, or automatically select
+// default UI according to platform.
+if (
+    browser.browserAction instanceof Object &&
+    browser.browserAction.setPopup instanceof Function
+) {
+    const env = vAPI.webextFlavor;
+    if (
+        µb.hiddenSettings.uiFlavor === 'classic' || (
+            µb.hiddenSettings.uiFlavor === 'unset' && (
+                env.soup.has('chromium') && env.major < 66 ||
+                env.soup.has('firefox') && env.major < 68
+            )
+        )
+    ) {
+        browser.browserAction.setPopup({ popup: 'popup.html' });
+    }
+}
+
+// https://github.com/uBlockOrigin/uBlock-issues/issues/717
+//   Prevent the extension from being restarted mid-session.
+browser.runtime.onUpdateAvailable.addListener(details => {
+    const toInt = vAPI.app.intFromVersion;
+    if (
+        µBlock.hiddenSettings.extensionUpdateForceReload === true ||
+        toInt(details.version) <= toInt(vAPI.app.version)
+    ) {
+        vAPI.app.restart();
+    }
+});
+
+log.info(`All ready ${Date.now()-vAPI.T0} ms after launch`);
+
+// <<<<< end of private scope
 })();
-
-/******************************************************************************/
-
-µBlock.restart();

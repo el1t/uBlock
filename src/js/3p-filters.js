@@ -1,7 +1,7 @@
 /*******************************************************************************
 
     uBlock Origin - a browser extension to block requests.
-    Copyright (C) 2014-2016 Raymond Hill
+    Copyright (C) 2014-present Raymond Hill
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -21,573 +21,604 @@
 
 /* global uDom */
 
-/******************************************************************************/
-
-(function() {
-
 'use strict';
 
 /******************************************************************************/
 
-var userListName = vAPI.i18n('1pPageName');
-var listDetails = {};
-var parseCosmeticFilters = true;
-var ignoreGenericCosmeticFilters = false;
-var externalLists = '';
-var cacheWasPurged = false;
-var needUpdate = false;
-var hasCachedContent = false;
+(( ) => {
 
 /******************************************************************************/
 
-var onMessage = function(msg) {
+const lastUpdateTemplateString = vAPI.i18n('3pLastUpdate');
+const reValidExternalList = /^[a-z-]+:\/\/(?:\S+\/\S*|\/\S+)/m;
+
+let listDetails = {};
+let filteringSettingsHash = '';
+let hideUnusedSet = new Set([ '*' ]);
+
+/******************************************************************************/
+
+const messaging = vAPI.messaging;
+
+vAPI.broadcastListener.add(msg => {
     switch ( msg.what ) {
+    case 'assetUpdated':
+        updateAssetStatus(msg);
+        break;
+    case 'assetsUpdated':
+        document.body.classList.remove('updating');
+        renderWidgets();
+        break;
     case 'staticFilteringDataChanged':
         renderFilterLists();
         break;
-
-    case 'forceUpdateAssetsProgress':
-        renderBusyOverlay(true, msg.progress);
-        if ( msg.done ) {
-            messaging.send('dashboard', { what: 'reloadAllFilters' });
-        }
-        break;
-
     default:
         break;
     }
-};
-
-var messaging = vAPI.messaging;
-messaging.addChannelListener('dashboard', onMessage);
+});
 
 /******************************************************************************/
 
-var renderNumber = function(value) {
+const renderNumber = function(value) {
     return value.toLocaleString();
 };
 
 /******************************************************************************/
 
-// TODO: get rid of background page dependencies
+const renderFilterLists = function(soft) {
+    const listGroupTemplate = uDom('#templates .groupEntry');
+    const listEntryTemplate = uDom('#templates .listEntry');
+    const listStatsTemplate = vAPI.i18n('3pListsOfBlockedHostsPerListStats');
+    const renderElapsedTimeToString = vAPI.i18n.renderElapsedTimeToString;
+    const groupNames = new Map([ [ 'user', '' ] ]);
 
-var renderFilterLists = function() {
-    var listGroupTemplate = uDom('#templates .groupEntry');
-    var listEntryTemplate = uDom('#templates .listEntry');
-    var listStatsTemplate = vAPI.i18n('3pListsOfBlockedHostsPerListStats');
-    var renderElapsedTimeToString = vAPI.i18n.renderElapsedTimeToString;
-    var lastUpdateString = vAPI.i18n('3pLastUpdate');
-
-    // Assemble a pretty blacklist name if possible
-    var listNameFromListKey = function(listKey) {
-        if ( listKey === listDetails.userFiltersPath ) {
-            return userListName;
-        }
-        var list = listDetails.current[listKey] || listDetails.available[listKey];
-        var listTitle = list ? list.title : '';
-        if ( listTitle === '' ) {
-            return listKey;
-        }
+    // Assemble a pretty list name if possible
+    const listNameFromListKey = function(listKey) {
+        const list = listDetails.current[listKey] || listDetails.available[listKey];
+        const listTitle = list ? list.title : '';
+        if ( listTitle === '' ) { return listKey; }
         return listTitle;
     };
 
-    var liFromListEntry = function(listKey) {
-        var entry = listDetails.available[listKey];
-        var li = listEntryTemplate.clone();
-
-        if ( entry.off !== true ) {
-            li.descendants('input').attr('checked', '');
+    const liFromListEntry = function(listKey, li, hideUnused) {
+        const entry = listDetails.available[listKey];
+        if ( !li ) {
+            li = listEntryTemplate.clone().nodeAt(0);
         }
-
-        var elem = li.descendants('a:nth-of-type(1)');
-        elem.attr('href', 'asset-viewer.html?url=' + encodeURI(listKey));
-        elem.attr('type', 'text/html');
-        elem.attr('data-listkey', listKey);
-        elem.text(listNameFromListKey(listKey) + '\u200E');
-
-        if ( entry.instructionURL ) {
-            elem = li.descendants('a:nth-of-type(2)');
-            elem.attr('href', entry.instructionURL);
-            elem.css('display', '');
-        }
-
-        if ( entry.supportName ) {
-            elem = li.descendants('a:nth-of-type(3)');
-            elem.attr('href', entry.supportURL);
-            elem.text('(' + entry.supportName + ')');
-            elem.css('display', '');
-        }
-
-        elem = li.descendants('span.counts');
-        var text = listStatsTemplate
-            .replace('{{used}}', renderNumber(!entry.off && !isNaN(+entry.entryUsedCount) ? entry.entryUsedCount : 0))
-            .replace('{{total}}', !isNaN(+entry.entryCount) ? renderNumber(entry.entryCount) : '?');
-        elem.text(text);
-
-        // https://github.com/gorhill/uBlock/issues/78
-        // Badge for non-secure connection
-        var remoteURL = listKey;
-        if ( remoteURL.lastIndexOf('http:', 0) !== 0 ) {
-            remoteURL = entry.homeURL || '';
-        }
-        if ( remoteURL.lastIndexOf('http:', 0) === 0 ) {
-            li.descendants('span.status.unsecure').css('display', '');
-        }
-
-        // https://github.com/chrisaljoudi/uBlock/issues/104
-        var asset = listDetails.cache[listKey] || {};
-
-        // Badge for update status
-        if ( entry.off !== true ) {
-            if ( asset.repoObsolete ) {
-                li.descendants('span.status.new').css('display', '');
-                needUpdate = true;
-            } else if ( asset.cacheObsolete ) {
-                li.descendants('span.status.obsolete').css('display', '');
-                needUpdate = true;
-            } else if ( entry.external && !asset.cached ) {
-                li.descendants('span.status.obsolete').css('display', '');
-                needUpdate = true;
+        const on = entry.off !== true;
+        li.classList.toggle('checked', on);
+        let elem;
+        if ( li.getAttribute('data-listkey') !== listKey ) {
+            li.setAttribute('data-listkey', listKey);
+            elem = li.querySelector('input[type="checkbox"]');
+            elem.checked = on;
+            elem = li.querySelector('.listname');
+            elem.textContent = listNameFromListKey(listKey);
+            elem = li.querySelector('a.content');
+            elem.setAttribute('href', 'asset-viewer.html?url=' + encodeURIComponent(listKey));
+            elem.setAttribute('type', 'text/html');
+            li.classList.remove('toRemove');
+            if ( entry.supportName ) {
+                li.classList.add('support');
+                elem = li.querySelector('a.support');
+                elem.setAttribute('href', entry.supportURL);
+                elem.setAttribute('title', entry.supportName);
+            } else {
+                li.classList.remove('support');
             }
+            if ( entry.external ) {
+                li.classList.add('external');
+            } else {
+                li.classList.remove('external');
+            }
+            if ( entry.instructionURL ) {
+                li.classList.add('mustread');
+                elem = li.querySelector('a.mustread');
+                elem.setAttribute('href', entry.instructionURL);
+            } else {
+                li.classList.remove('mustread');
+            }
+            li.classList.toggle('unused', hideUnused && !on);
         }
-
-        // In cache
-        if ( asset.cached ) {
-            elem = li.descendants('span.status.purge');
-            elem.css('display', '');
-            elem.attr('title', lastUpdateString.replace('{{ago}}', renderElapsedTimeToString(asset.lastModified)));
-            hasCachedContent = true;
+        // https://github.com/gorhill/uBlock/issues/1429
+        if ( !soft ) {
+            li.querySelector('input[type="checkbox"]').checked = on;
         }
+        elem = li.querySelector('span.counts');
+        let text = '';
+        if ( !isNaN(+entry.entryUsedCount) && !isNaN(+entry.entryCount) ) {
+            text = listStatsTemplate
+                .replace('{{used}}', renderNumber(on ? entry.entryUsedCount : 0))
+                .replace('{{total}}', renderNumber(entry.entryCount));
+        }
+        elem.textContent = text;
+        // https://github.com/chrisaljoudi/uBlock/issues/104
+        const asset = listDetails.cache[listKey] || {};
+        const remoteURL = asset.remoteURL;
+        li.classList.toggle(
+            'unsecure',
+            typeof remoteURL === 'string' && remoteURL.lastIndexOf('http:', 0) === 0
+        );
+        li.classList.toggle('failed', asset.error !== undefined);
+        li.classList.toggle('obsolete', asset.obsolete === true);
+        if ( asset.cached === true ) {
+            li.classList.add('cached');
+            li.querySelector('.status.cache').setAttribute(
+                'title',
+                lastUpdateTemplateString.replace(
+                    '{{ago}}',
+                    renderElapsedTimeToString(asset.writeTime)
+                )
+            );
+        } else {
+            li.classList.remove('cached');
+        }
+        li.classList.remove('discard');
         return li;
     };
 
-    var listEntryCountFromGroup = function(listKeys) {
-        if ( Array.isArray(listKeys) === false ) {
-            return '';
-        }
-        var count = 0;
-        var i = listKeys.length;
-        while ( i-- ) {
-            if ( listDetails.available[listKeys[i]].off !== true ) {
+    const listEntryCountFromGroup = function(listKeys) {
+        if ( Array.isArray(listKeys) === false ) { return ''; }
+        let count = 0,
+            total = 0;
+        for ( const listKey of listKeys ) {
+            if ( listDetails.available[listKey].off !== true ) {
                 count += 1;
             }
+            total += 1;
         }
-        return count === 0 ? '' : '(' + count.toLocaleString() + ')';
+        return total !== 0 ?
+            `(${count.toLocaleString()}/${total.toLocaleString()})` :
+            '';
     };
 
-    var liFromListGroup = function(groupKey, listKeys) {
-        var liGroup = listGroupTemplate.clone();
-        var groupName = vAPI.i18n('3pGroup' + groupKey.charAt(0).toUpperCase() + groupKey.slice(1));
-        if ( groupName !== '' ) {
-            liGroup.descendants('span.geName').text(groupName);
-            liGroup.descendants('span.geCount').text(listEntryCountFromGroup(listKeys));
+    const liFromListGroup = function(groupKey, listKeys) {
+        let liGroup = document.querySelector(`#lists > .groupEntry[data-groupkey="${groupKey}"]`);
+        if ( liGroup === null ) {
+            liGroup = listGroupTemplate.clone().nodeAt(0);
+            let groupName = groupNames.get(groupKey);
+            if ( groupName === undefined ) {
+                groupName = vAPI.i18n('3pGroup' + groupKey.charAt(0).toUpperCase() + groupKey.slice(1));
+                groupNames.set(groupKey, groupName);
+            }
+            if ( groupName !== '' ) {
+                liGroup.querySelector('.geName').textContent = groupName;
+            }
         }
-        var ulGroup = liGroup.descendants('ul');
-        if ( !listKeys ) {
-            return liGroup;
+        if ( liGroup.querySelector('.geName:empty') === null ) {
+            liGroup.querySelector('.geCount').textContent = listEntryCountFromGroup(listKeys);
         }
+        let hideUnused = mustHideUnusedLists(groupKey);
+        liGroup.classList.toggle('hideUnused', hideUnused);
+        let ulGroup = liGroup.querySelector('.listEntries');
+        if ( !listKeys ) { return liGroup; }
         listKeys.sort(function(a, b) {
             return (listDetails.available[a].title || '').localeCompare(listDetails.available[b].title || '');
         });
-        for ( var i = 0; i < listKeys.length; i++ ) {
-            ulGroup.append(liFromListEntry(listKeys[i]));
+        for ( let i = 0; i < listKeys.length; i++ ) {
+            let liEntry = liFromListEntry(
+                listKeys[i],
+                ulGroup.children[i],
+                hideUnused
+            );
+            if ( liEntry.parentElement === null ) {
+                ulGroup.appendChild(liEntry);
+            }
         }
         return liGroup;
     };
 
-    // https://www.youtube.com/watch?v=unCVi4hYRlY#t=30m18s
-
-    var groupsFromLists = function(lists) {
-        var groups = {};
-        var listKeys = Object.keys(lists);
-        var i = listKeys.length;
-        var listKey, list, groupKey;
-        while ( i-- ) {
-            listKey = listKeys[i];
-            list = lists[listKey];
-            groupKey = list.group || 'nogroup';
-            if ( groups[groupKey] === undefined ) {
-                groups[groupKey] = [];
+    const groupsFromLists = function(lists) {
+        let groups = new Map();
+        let listKeys = Object.keys(lists);
+        for ( let listKey of listKeys ) {
+            let list = lists[listKey];
+            let groupKey = list.group || 'nogroup';
+            if ( groupKey === 'social' ) {
+                groupKey = 'annoyances';
             }
-            groups[groupKey].push(listKey);
+            let memberKeys = groups.get(groupKey);
+            if ( memberKeys === undefined ) {
+                groups.set(groupKey, (memberKeys = []));
+            }
+            memberKeys.push(listKey);
         }
         return groups;
     };
 
-    var onListsReceived = function(details) {
+    const onListsReceived = function(details) {
         // Before all, set context vars
         listDetails = details;
-        parseCosmeticFilters = details.parseCosmeticFilters;
-        ignoreGenericCosmeticFilters = details.ignoreGenericCosmeticFilters;
-        needUpdate = false;
-        hasCachedContent = false;
+
+        // "My filters" will now sit in its own group. The following code
+        // ensures smooth transition.
+        listDetails.available['user-filters'].group = 'user';
+
+        // Incremental rendering: this will allow us to easily discard unused
+        // DOM list entries.
+        uDom('#lists .listEntries .listEntry[data-listkey]').addClass('discard');
+
+        // Remove import widget while we recreate list of lists.
+        const importWidget = uDom('.listEntry.toImport').detach();
 
         // Visually split the filter lists in purpose-based groups
-        var ulLists = uDom('#lists').empty(), liGroup;
-        var groups = groupsFromLists(details.available);
-        var groupKey, i;
-        var groupKeys = [
+        const ulLists = document.querySelector('#lists');
+        const groups = groupsFromLists(details.available);
+        const groupKeys = [
+            'user',
             'default',
             'ads',
             'privacy',
             'malware',
-            'social',
+            'annoyances',
             'multipurpose',
             'regions',
             'custom'
         ];
-        for ( i = 0; i < groupKeys.length; i++ ) {
-            groupKey = groupKeys[i];
-            liGroup = liFromListGroup(groupKey, groups[groupKey]);
-            liGroup.toggleClass(
-                'collapsed',
-                vAPI.localStorage.getItem('collapseGroup' + (i + 1)) === 'y'
-            );
-            ulLists.append(liGroup);
-            delete groups[groupKey];
+        document.body.classList.toggle('hideUnused', mustHideUnusedLists('*'));
+        for ( let i = 0; i < groupKeys.length; i++ ) {
+            let groupKey = groupKeys[i];
+            let liGroup = liFromListGroup(groupKey, groups.get(groupKey));
+            liGroup.setAttribute('data-groupkey', groupKey);
+            if ( liGroup.parentElement === null ) {
+                ulLists.appendChild(liGroup);
+            }
+            groups.delete(groupKey);
         }
         // For all groups not covered above (if any left)
-        groupKeys = Object.keys(groups);
-        for ( i = 0; i < groupKeys.length; i++ ) {
-            groupKey = groupKeys[i];
-            ulLists.append(liFromListGroup(groupKey, groups[groupKey]));
+        for ( const groupKey of Object.keys(groups) ) {
+            ulLists.appendChild(liFromListGroup(groupKey, groupKey));
         }
 
-        uDom('#listsOfBlockedHostsPrompt').text(
+        uDom('#lists .listEntries .listEntry.discard').remove();
+
+        // Re-insert import widget.
+        uDom('[data-groupkey="custom"] .listEntries').append(importWidget);
+
+        uDom.nodeFromId('autoUpdate').checked = listDetails.autoUpdate === true;
+        uDom.nodeFromId('listsOfBlockedHostsPrompt').textContent =
             vAPI.i18n('3pListsOfBlockedHostsPrompt')
-                .replace('{{netFilterCount}}', renderNumber(details.netFilterCount))
-                .replace('{{cosmeticFilterCount}}', renderNumber(details.cosmeticFilterCount))
-        );
-        uDom('#autoUpdate').prop('checked', listDetails.autoUpdate === true);
-        uDom('#parseCosmeticFilters').prop('checked', listDetails.parseCosmeticFilters === true);
-        uDom('#ignoreGenericCosmeticFilters').prop('checked', listDetails.ignoreGenericCosmeticFilters === true);
+                .replace(
+                    '{{netFilterCount}}',
+                    renderNumber(details.netFilterCount)
+                )
+                .replace(
+                    '{{cosmeticFilterCount}}',
+                    renderNumber(details.cosmeticFilterCount)
+                );
+        uDom.nodeFromId('parseCosmeticFilters').checked =
+            listDetails.parseCosmeticFilters === true;
+        uDom.nodeFromId('ignoreGenericCosmeticFilters').checked =
+            listDetails.ignoreGenericCosmeticFilters === true;
+
+        // Compute a hash of the settings so that we can keep track of changes
+        // affecting the loading of filter lists.
+        if ( !soft ) {
+            filteringSettingsHash = hashFromCurrentFromSettings();
+        }
+
+        // https://github.com/gorhill/uBlock/issues/2394
+        document.body.classList.toggle('updating', listDetails.isUpdating);
 
         renderWidgets();
-        renderBusyOverlay(details.manualUpdate, details.manualUpdateProgress);
     };
 
-    messaging.send('dashboard', { what: 'getLists' }, onListsReceived);
+    messaging.send('dashboard', {
+        what: 'getLists',
+    }).then(details => {
+        onListsReceived(details);
+    });
 };
 
 /******************************************************************************/
 
-// Progress must be normalized to [0, 1], or can be undefined.
-
-var renderBusyOverlay = function(state, progress) {
-    progress = progress || {};
-    var showProgress = typeof progress.value === 'number';
-    if ( showProgress ) {
-        uDom('#busyOverlay > div:nth-of-type(2) > div:first-child').css(
-            'width',
-            (progress.value * 100).toFixed(1) + '%'
+const renderWidgets = function() {
+    let cl = uDom.nodeFromId('buttonApply').classList;
+    cl.toggle(
+        'disabled',
+        filteringSettingsHash === hashFromCurrentFromSettings()
+    );
+    const updating = document.body.classList.contains('updating');
+    cl = uDom.nodeFromId('buttonUpdate').classList;
+    cl.toggle('active', updating);
+    cl.toggle(
+        'disabled',
+        updating === false &&
+        document.querySelector('#lists .listEntry.obsolete:not(.toRemove) input[type="checkbox"]:checked') === null
         );
-        var text = progress.text || '';
-        if ( text !== '' ) {
-            uDom('#busyOverlay > div:nth-of-type(2) > div:last-child').text(text);
-        }
-    }
-    uDom('#busyOverlay > div:nth-of-type(2)').css('display', showProgress ? '' : 'none');
-    uDom('body').toggleClass('busy', !!state);
+    cl = uDom.nodeFromId('buttonPurgeAll').classList;
+    cl.toggle(
+        'disabled',
+        updating || document.querySelector('#lists .listEntry.cached:not(.obsolete)') === null
+    );
 };
 
 /******************************************************************************/
 
-// This is to give a visual hint that the selection of blacklists has changed.
+const updateAssetStatus = function(details) {
+    const li = document.querySelector(
+        '#lists .listEntry[data-listkey="' + details.key + '"]'
+    );
+    if ( li === null ) { return; }
+    li.classList.toggle('failed', !!details.failed);
+    li.classList.toggle('obsolete', !details.cached);
+    li.classList.toggle('cached', !!details.cached);
+    if ( details.cached ) {
+        li.querySelector('.status.cache').setAttribute(
+            'title',
+            lastUpdateTemplateString.replace(
+                '{{ago}}',
+                vAPI.i18n.renderElapsedTimeToString(Date.now())
+            )
+        );
+    }
+    renderWidgets();
+};
 
-var renderWidgets = function() {
-    uDom('#buttonApply').toggleClass('disabled', !listsSelectionChanged());
-    uDom('#buttonUpdate').toggleClass('disabled', !listsContentChanged());
-    uDom('#buttonPurgeAll').toggleClass('disabled', !hasCachedContent);
+/*******************************************************************************
+
+    Compute a hash from all the settings affecting how filter lists are loaded
+    in memory.
+
+**/
+
+const hashFromCurrentFromSettings = function() {
+    const hash = [
+        uDom.nodeFromId('parseCosmeticFilters').checked,
+        uDom.nodeFromId('ignoreGenericCosmeticFilters').checked
+    ];
+    const listHash = [];
+    const listEntries = document.querySelectorAll('#lists .listEntry[data-listkey]:not(.toRemove)');
+    for ( const liEntry of listEntries ) {
+        if ( liEntry.querySelector('input[type="checkbox"]:checked') !== null ) {
+            listHash.push(liEntry.getAttribute('data-listkey'));
+        }
+    }
+    hash.push(
+        listHash.sort().join(),
+        uDom.nodeFromId('importLists').checked &&
+            reValidExternalList.test(uDom.nodeFromId('externalLists').value),
+        document.querySelector('#lists .listEntry.toRemove') !== null
+    );
+    return hash.join();
 };
 
 /******************************************************************************/
 
-// Return whether selection of lists changed.
-
-var listsSelectionChanged = function() {
-    if (
-        listDetails.parseCosmeticFilters !== parseCosmeticFilters ||
-        listDetails.parseCosmeticFilters && listDetails.ignoreGenericCosmeticFilters !== ignoreGenericCosmeticFilters
-    ) {
-        return true;
-    }
-
-    if ( cacheWasPurged ) {
-        return true;
-    }
-
-    var availableLists = listDetails.available;
-    var currentLists = listDetails.current;
-    var location, availableOff, currentOff;
-    
-    // This check existing entries
-    for ( location in availableLists ) {
-        if ( availableLists.hasOwnProperty(location) === false ) {
-            continue;
-        }
-        availableOff = availableLists[location].off === true;
-        currentOff = currentLists[location] === undefined || currentLists[location].off === true;
-        if ( availableOff !== currentOff ) {
-            return true;
-        }
-    }
-
-    // This check removed entries
-    for ( location in currentLists ) {
-        if ( currentLists.hasOwnProperty(location) === false ) {
-            continue;
-        }
-        currentOff = currentLists[location].off === true;
-        availableOff = availableLists[location] === undefined || availableLists[location].off === true;
-        if ( availableOff !== currentOff ) {
-            return true;
-        }
-    }
-
-    return false;
+const onListsetChanged = function(ev) {
+    const input = ev.target;
+    const li = input.closest('.listEntry');
+    li.classList.toggle('checked', input.checked);
+    onFilteringSettingsChanged();
 };
 
 /******************************************************************************/
 
-// Return whether content need update.
-
-var listsContentChanged = function() {
-    return needUpdate;
-};
-
-/******************************************************************************/
-
-var onListCheckboxChanged = function() {
-    var href = uDom(this).parent().descendants('a').first().attr('data-listkey');
-    if ( typeof href !== 'string' ) {
-        return;
-    }
-    if ( listDetails.available[href] === undefined ) {
-        return;
-    }
-    listDetails.available[href].off = !this.checked;
+const onFilteringSettingsChanged = function() {
     renderWidgets();
 };
 
 /******************************************************************************/
 
-var onPurgeClicked = function() {
-    var button = uDom(this);
-    var li = button.parent();
-    var href = li.descendants('a').first().attr('data-listkey');
-    if ( !href ) {
-        return;
-    }
+const onRemoveExternalList = function(ev) {
+    const liEntry = ev.target.closest('[data-listkey]');
+    if ( liEntry === null ) { return; }
+    liEntry.classList.toggle('toRemove');
+    renderWidgets();
+};
 
-    messaging.send('dashboard', { what: 'purgeCache', path: href });
-    button.remove();
+/******************************************************************************/
+
+const onPurgeClicked = function(ev) {
+    const liEntry = ev.target.closest('[data-listkey]');
+    const listKey = liEntry.getAttribute('data-listkey') || '';
+    if ( listKey === '' ) { return; }
+
+    messaging.send('dashboard', {
+        what: 'purgeCache',
+        assetKey: listKey,
+    });
 
     // If the cached version is purged, the installed version must be assumed
     // to be obsolete.
     // https://github.com/gorhill/uBlock/issues/1733
-    // An external filter list must not be marked as obsolete, they will always
-    // be fetched anyways if there is no cached copy.
-    var entry = listDetails.current && listDetails.current[href];
-    if ( entry && entry.off !== true && /^[a-z]+:\/\//.test(href) === false ) {
-        if ( typeof entry.homeURL !== 'string' || entry.homeURL === '' ) {
-            li.descendants('span.status.new').css('display', '');
-        } else {
-            li.descendants('span.status.obsolete').css('display', '');
-        }
-        needUpdate = true;
-    }
+    //   An external filter list must not be marked as obsolete, they will
+    //   always be fetched anyways if there is no cached copy.
+    liEntry.classList.add('obsolete');
+    liEntry.classList.remove('cached');
 
-    if ( li.descendants('input').first().prop('checked') ) {
-        cacheWasPurged = true;
+    if ( liEntry.querySelector('input[type="checkbox"]').checked ) {
         renderWidgets();
     }
 };
 
 /******************************************************************************/
 
-var selectFilterLists = function(callback) {
+const selectFilterLists = async function() {
     // Cosmetic filtering switch
     messaging.send('dashboard', {
         what: 'userSettings',
         name: 'parseAllABPHideFilters',
-        value: listDetails.parseCosmeticFilters
+        value: uDom.nodeFromId('parseCosmeticFilters').checked,
     });
     messaging.send('dashboard', {
         what: 'userSettings',
         name: 'ignoreGenericCosmeticFilters',
-        value: listDetails.ignoreGenericCosmeticFilters
+        value: uDom.nodeFromId('ignoreGenericCosmeticFilters').checked,
     });
 
-    // Filter lists
-    var switches = [];
-    var lis = uDom('#lists .listEntry'), li;
-    var i = lis.length;
-    while ( i-- ) {
-        li = lis.at(i);
-        switches.push({
-            location: li.descendants('a').attr('data-listkey'),
-            off: li.descendants('input').prop('checked') === false
-        });
+    // Filter lists to select
+    const toSelect = [];
+    for (
+        const liEntry of
+        document.querySelectorAll('#lists .listEntry[data-listkey]:not(.toRemove)')
+    ) {
+        if ( liEntry.querySelector('input[type="checkbox"]:checked') !== null ) {
+            toSelect.push(liEntry.getAttribute('data-listkey'));
+        }
     }
 
-    messaging.send(
-        'dashboard',
-        {
-            what: 'selectFilterLists',
-            switches: switches
-        },
-        callback
-    );
+    // External filter lists to remove
+    const toRemove = [];
+    for (
+        const liEntry of
+        document.querySelectorAll('#lists .listEntry.toRemove[data-listkey]')
+    ) {
+        toRemove.push(liEntry.getAttribute('data-listkey'));
+    }
+
+    // External filter lists to import
+    const externalListsElem = document.getElementById('externalLists');
+    const toImport = externalListsElem.value.trim();
+    {
+        const liEntry = externalListsElem.closest('.listEntry');
+        liEntry.classList.remove('checked');
+        liEntry.querySelector('input[type="checkbox"]').checked = false;
+        externalListsElem.value = '';
+    }
+
+    await messaging.send('dashboard', {
+        what: 'applyFilterListSelection',
+        toSelect: toSelect,
+        toImport: toImport,
+        toRemove: toRemove,
+    });
+
+    filteringSettingsHash = hashFromCurrentFromSettings();
 };
 
 /******************************************************************************/
 
-var buttonApplyHandler = function() {
+const buttonApplyHandler = async function() {
     uDom('#buttonApply').removeClass('enabled');
-
-    renderBusyOverlay(true);
-
-    var onSelectionDone = function() {
-        messaging.send('dashboard', { what: 'reloadAllFilters' });
-    };
-
-    selectFilterLists(onSelectionDone);
-
-    cacheWasPurged = false;
-};
-
-/******************************************************************************/
-
-var buttonUpdateHandler = function() {
-    uDom('#buttonUpdate').removeClass('enabled');
-
-    if ( needUpdate ) {
-        renderBusyOverlay(true);
-
-        var onSelectionDone = function() {
-            messaging.send('dashboard', { what: 'forceUpdateAssets' });
-        };
-
-        selectFilterLists(onSelectionDone);
-
-        cacheWasPurged = false;
-    }
-};
-
-/******************************************************************************/
-
-var buttonPurgeAllHandler = function() {
-    uDom('#buttonPurgeAll').removeClass('enabled');
-
-    renderBusyOverlay(true);
-
-    var onCompleted = function() {
-        cacheWasPurged = true;
-        renderFilterLists();
-    };
-
-    messaging.send('dashboard', { what: 'purgeAllCaches' }, onCompleted);
-};
-
-/******************************************************************************/
-
-var autoUpdateCheckboxChanged = function() {
-    messaging.send(
-        'dashboard',
-        {
-            what: 'userSettings',
-            name: 'autoUpdate',
-            value: this.checked
-        }
-    );
-};
-
-/******************************************************************************/
-
-var cosmeticSwitchChanged = function() {
-    listDetails.parseCosmeticFilters = uDom.nodeFromId('parseCosmeticFilters').checked;
-    listDetails.ignoreGenericCosmeticFilters = uDom.nodeFromId('ignoreGenericCosmeticFilters').checked;
+    await selectFilterLists();
     renderWidgets();
+    messaging.send('dashboard', { what: 'reloadAllFilters' });
 };
 
 /******************************************************************************/
 
-var renderExternalLists = function() {
-    var onReceived = function(details) {
-        uDom('#externalLists').val(details);
-        externalLists = details;
-    };
-    messaging.send(
-        'dashboard',
-        { what: 'userSettings', name: 'externalLists' },
-        onReceived
-    );
+const buttonUpdateHandler = async function() {
+    await selectFilterLists();
+    document.body.classList.add('updating');
+    renderWidgets();
+    messaging.send('dashboard', { what: 'forceUpdateAssets' });
 };
 
 /******************************************************************************/
 
-var externalListsChangeHandler = function() {
-    uDom.nodeFromId('externalListsApply').disabled =
-        uDom.nodeFromId('externalLists').value.trim() === externalLists.trim();
+const buttonPurgeAllHandler = async function(hard) {
+    uDom('#buttonPurgeAll').removeClass('enabled');
+    await messaging.send('dashboard', {
+        what: 'purgeAllCaches',
+        hard,
+    });
+    renderFilterLists(true);
 };
 
 /******************************************************************************/
 
-var externalListsApplyHandler = function() {
-    externalLists = uDom.nodeFromId('externalLists').value;
-    messaging.send(
-        'dashboard',
-        {
-            what: 'userSettings',
-            name: 'externalLists',
-            value: externalLists
+const autoUpdateCheckboxChanged = function() {
+    messaging.send('dashboard', {
+        what: 'userSettings',
+        name: 'autoUpdate',
+        value: this.checked,
+    });
+};
+
+/******************************************************************************/
+
+// Collapsing of unused lists.
+
+const mustHideUnusedLists = function(which) {
+    const hideAll = hideUnusedSet.has('*');
+    if ( which === '*' ) { return hideAll; }
+    return hideUnusedSet.has(which) !== hideAll;
+};
+
+const toggleHideUnusedLists = function(which) {
+    const doesHideAll = hideUnusedSet.has('*');
+    let groupSelector;
+    let mustHide;
+    if ( which === '*' ) {
+        mustHide = doesHideAll === false;
+        groupSelector = '';
+        hideUnusedSet.clear();
+        if ( mustHide ) {
+            hideUnusedSet.add(which);
         }
-    );
-    renderFilterLists();
-    uDom('#externalListsApply').prop('disabled', true);
-};
-
-/******************************************************************************/
-
-var groupEntryClickHandler = function() {
-    var li = uDom(this).ancestors('.groupEntry');
-    li.toggleClass('collapsed');
-    var key = 'collapseGroup' + li.nthOfType();
-    if ( li.hasClass('collapsed') ) {
-        vAPI.localStorage.setItem(key, 'y');
+        document.body.classList.toggle('hideUnused', mustHide);
+        uDom('.groupEntry[data-groupkey]').toggleClass('hideUnused', mustHide);
     } else {
-        vAPI.localStorage.removeItem(key);
+        const doesHide = hideUnusedSet.has(which);
+        if ( doesHide ) {
+            hideUnusedSet.delete(which);
+        } else {
+            hideUnusedSet.add(which);
+        }
+        mustHide = doesHide === doesHideAll;
+        groupSelector = '.groupEntry[data-groupkey="' + which + '"] ';
+        uDom(groupSelector).toggleClass('hideUnused', mustHide);
     }
+    uDom(groupSelector + '.listEntry input[type="checkbox"]:not(:checked)')
+        .ancestors('.listEntry[data-listkey]')
+        .toggleClass('unused', mustHide);
+    vAPI.localStorage.setItem(
+        'hideUnusedFilterLists',
+        Array.from(hideUnusedSet)
+    );
 };
+
+const revealHiddenUsedLists = function() {
+    uDom('#lists .listEntry.unused input[type="checkbox"]:checked')
+        .ancestors('.listEntry[data-listkey]')
+        .removeClass('unused');
+};
+
+uDom('#listsOfBlockedHostsPrompt').on('click', function() {
+    toggleHideUnusedLists('*');
+});
+
+uDom('#lists').on('click', '.groupEntry[data-groupkey] > .geDetails', function(ev) {
+    toggleHideUnusedLists(
+        uDom(ev.target)
+            .ancestors('.groupEntry[data-groupkey]')
+            .attr('data-groupkey')
+    );
+});
+
+// Initialize from saved state.
+vAPI.localStorage.getItemAsync('hideUnusedFilterLists').then(value => {
+    if ( Array.isArray(value) ) {
+        hideUnusedSet = new Set(value);
+    }
+});
 
 /******************************************************************************/
 
-var getCloudData = function() {
-    var bin = {
+// Cloud-related.
+
+const toCloudData = function() {
+    const bin = {
         parseCosmeticFilters: uDom.nodeFromId('parseCosmeticFilters').checked,
         ignoreGenericCosmeticFilters: uDom.nodeFromId('ignoreGenericCosmeticFilters').checked,
-        selectedLists: [],
-        externalLists: externalLists
+        selectedLists: []
     };
 
-    var lis = uDom('#lists .listEntry'), li;
-    var i = lis.length;
-    while ( i-- ) {
-        li = lis.at(i);
-        if ( li.descendants('input').prop('checked') ) {
-            bin.selectedLists.push(li.descendants('a').attr('data-listkey'));
+    const liEntries = document.querySelectorAll('#lists .listEntry');
+    for ( const liEntry of liEntries ) {
+        if ( liEntry.querySelector('input').checked ) {
+            bin.selectedLists.push(liEntry.getAttribute('data-listkey'));
         }
     }
 
     return bin;
 };
 
-var setCloudData = function(data, append) {
-    if ( typeof data !== 'object' || data === null ) {
-        return;
-    }
+const fromCloudData = function(data, append) {
+    if ( typeof data !== 'object' || data === null ) { return; }
 
-    var elem, checked;
+    let elem, checked;
 
     elem = uDom.nodeFromId('parseCosmeticFilters');
     checked = data.parseCosmeticFilters === true || append && elem.checked;
@@ -597,47 +628,71 @@ var setCloudData = function(data, append) {
     checked = data.ignoreGenericCosmeticFilters === true || append && elem.checked;
     elem.checked = listDetails.ignoreGenericCosmeticFilters = checked;
 
-    var lis = uDom('#lists .listEntry'), li, listKey;
-    var i = lis.length;
-    while ( i-- ) {
-        li = lis.at(i);
-        elem = li.descendants('input');
-        listKey = li.descendants('a').attr('data-listkey');
-        checked = data.selectedLists.indexOf(listKey) !== -1 ||
-                  append && elem.prop('checked');
-        elem.prop('checked', checked);
-        listDetails.available[listKey].off = !checked;
+    const selectedSet = new Set(data.selectedLists);
+    const listEntries = uDom('#lists .listEntry');
+    for ( let i = 0, n = listEntries.length; i < n; i++ ) {
+        const listEntry = listEntries.at(i);
+        const listKey = listEntry.attr('data-listkey');
+        const hasListKey = selectedSet.has(listKey);
+        selectedSet.delete(listKey);
+        const input = listEntry.descendants('input').first();
+        if ( append && input.prop('checked') ) { continue; }
+        input.prop('checked', hasListKey);
     }
 
-    elem = uDom.nodeFromId('externalLists');
-    if ( !append ) {
-        elem.value = '';
+    // If there are URL-like list keys left in the selected set, import them.
+    for ( const listKey of selectedSet ) {
+        if ( reValidExternalList.test(listKey) === false ) {
+            selectedSet.delete(listKey);
+        }
     }
-    elem.value += data.externalLists || '';
+    if ( selectedSet.size !== 0 ) {
+        elem = uDom.nodeFromId('externalLists');
+        if ( append ) {
+            if ( elem.value.trim() !== '' ) { elem.value += '\n'; }
+        } else {
+            elem.value = '';
+        }
+        elem.value += Array.from(selectedSet).join('\n');
+        uDom.nodeFromId('importLists').checked = true;
+    }
 
+    revealHiddenUsedLists();
     renderWidgets();
-    externalListsChangeHandler();
 };
 
-self.cloud.onPush = getCloudData;
-self.cloud.onPull = setCloudData;
+self.cloud.onPush = toCloudData;
+self.cloud.onPull = fromCloudData;
+
+/******************************************************************************/
+
+self.hasUnsavedData = function() {
+    return hashFromCurrentFromSettings() !== filteringSettingsHash;
+};
 
 /******************************************************************************/
 
 uDom('#autoUpdate').on('change', autoUpdateCheckboxChanged);
-uDom('#parseCosmeticFilters').on('change', cosmeticSwitchChanged);
-uDom('#ignoreGenericCosmeticFilters').on('change', cosmeticSwitchChanged);
-uDom('#buttonApply').on('click', buttonApplyHandler);
-uDom('#buttonUpdate').on('click', buttonUpdateHandler);
-uDom('#buttonPurgeAll').on('click', buttonPurgeAllHandler);
-uDom('#lists').on('change', '.listEntry > input', onListCheckboxChanged);
-uDom('#lists').on('click', 'span.purge', onPurgeClicked);
-uDom('#externalLists').on('input', externalListsChangeHandler);
-uDom('#externalListsApply').on('click', externalListsApplyHandler);
-uDom('#lists').on('click', '.groupEntry > span', groupEntryClickHandler);
+uDom('#parseCosmeticFilters').on('change', onFilteringSettingsChanged);
+uDom('#ignoreGenericCosmeticFilters').on('change', onFilteringSettingsChanged);
+uDom('#buttonApply').on('click', ( ) => { buttonApplyHandler(); });
+uDom('#buttonUpdate').on('click', ( ) => { buttonUpdateHandler(); });
+uDom('#buttonPurgeAll').on('click', ev => {
+    buttonPurgeAllHandler(ev.ctrlKey && ev.shiftKey);
+});
+uDom('#lists').on('change', '.listEntry input', onListsetChanged);
+uDom('#lists').on('click', '.listEntry .remove', onRemoveExternalList);
+uDom('#lists').on('click', 'span.cache', onPurgeClicked);
+uDom('#externalLists').on('input', onFilteringSettingsChanged);
+
+uDom('#lists').on('click', '.listEntry label *', ev => {
+    if ( ev.target.matches('a,input,.forinput') ) { return; }
+    ev.preventDefault();
+});
+
+/******************************************************************************/
 
 renderFilterLists();
-renderExternalLists();
 
 /******************************************************************************/
 

@@ -2,30 +2,39 @@
 <html>
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="initial-scale=1">
-
+<meta name="viewport" content="width=device-width, initial-scale=1, minimum-scale=1">
 <title data-i18n="dashboardName"></title>
-<link href="css/dashboard.css" rel="stylesheet" type="text/css">
+<link href="css/themes/default.css" rel="stylesheet" type="text/css">
 <link href="css/common.css" rel="stylesheet" type="text/css">
+<link href="css/dashboard.css" rel="stylesheet" type="text/css">
 <link rel="shortcut icon" type="image/png" href="img/icon_16.png"/>
 </head>
 
 <body>
 <div id="dashboard-nav">
-    <div id="dashboard-nav-widgets">
-        <span data-i18n="extName"></span>
-        <a class="tabButton" href="#settings.html" data-i18n="settingsPageName"></a>
-        <a class="tabButton" href="#3p-filters.html" data-i18n="3pPageName"></a>
-        <a class="tabButton" href="#1p-filters.html" data-i18n="1pPageName"></a>
-        <a class="tabButton" href="#dyna-rules.html" data-i18n="rulesPageName"></a>
-        <a class="tabButton" href="#whitelist.html" data-i18n="whitelistPageName"></a>
-        <a class="tabButton" href="#about.html" data-i18n="aboutPageName"></a>
+    <span class="logo"><img data-i18n-title="extName" src="img/ublock.svg"></span><!--
+ --><span class="tabButton" data-pane="settings.html" data-i18n="settingsPageName"></span><!--
+ --><span class="tabButton" data-pane="3p-filters.html" data-i18n="3pPageName"></span><!--
+ --><span class="tabButton" data-pane="1p-filters.html" data-i18n="1pPageName"></span><!--
+ --><span class="tabButton" data-pane="dyna-rules.html" data-i18n="rulesPageName"></span><!--
+ --><span class="tabButton" data-pane="whitelist.html" data-i18n="whitelistPageName"></span><!--
+ --><span class="tabButton" data-pane="shortcuts.html" data-i18n="shortcutsPageName"></span><!--
+ --><span class="tabButton" data-pane="about.html" data-i18n="aboutPageName"></span>
+</div>
+<div id="unsavedWarning">
+    <div>
+        <span data-i18n="dashboardUnsavedWarning"></span>&emsp;
+        <button data-i18n="dashboardUnsavedWarningStay"></button>&emsp;
+        <button data-i18n="dashboardUnsavedWarningIgnore"></button>
     </div>
+    <div></div>
 </div>
 
 <iframe id="iframe" src=""></iframe>
 
+<script src="js/vapi.js"></script>
 <script src="js/vapi-common.js"></script>
+<script src="js/vapi-client.js"></script>
 <script src="js/udom.js"></script>
 <script src="js/i18n.js"></script>
 <script src="js/dashboard.js"></script>

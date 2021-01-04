@@ -1,0 +1,137 @@
+/**
+    uBlock Origin - a browser extension to block requests.
+    Copyright (C) 2018-present Raymond Hill
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program.  If not, see {http://www.gnu.org/licenses/}.
+
+    Home: https://github.com/gorhill/uBlock
+*/
+
+body {
+    display: flex;
+    flex-direction: column;
+    padding: 40px;
+    text-align: center;
+    }
+body > div {
+    margin: 0 0 var(--default-gap-large) 0;
+    }
+body > div > * {
+    margin: 0 0 var(--default-gap-xsmall) 0;
+    }
+a {
+    text-decoration: none;
+    }
+.code {
+    font-size: 13px;
+    word-break: break-all;
+    }
+#warningSign {
+    width: 100%;
+    }
+#warningSign > a {
+    fill: var(--yellow-50);
+    font-size: 96px;
+    }
+#theURL {
+    padding: 0;
+    }
+#theURL > * {
+    margin: 0;
+    }
+#theURL > p {
+    position: relative;
+    z-index: 10;
+    }
+#theURL > p > span:last-of-type {
+    background-color: transparent;
+    top: 100%;
+    box-sizing: border-box;
+    color: var(--fg-0-60);
+    cursor: pointer;
+    fill: var(--fg-0-60);
+    font-size: 1.2rem;
+    padding: var(--default-gap-xxsmall);
+    position: absolute;
+    transform: translate(0, -50%);
+    }
+#theURL:not(.collapsed) > p > span:last-of-type > span:first-of-type {
+    display: none;
+    }
+#theURL.collapsed > p > span:last-of-type > span:last-of-type {
+    display: none;
+    }
+body[dir="ltr"] #theURL > p > span:last-of-type {
+    right: 0;
+    }
+body[dir="rtl"] #theURL > p > span:last-of-type {
+    left: 0;
+    }
+#theURL > p:hover > span {
+    color: var(--default-ink);
+    fill: var(--default-ink);
+    }
+#parsed {
+    background-color: var(--bg-1);
+    border: 1px solid var(--bg-code);
+    border-top: none;
+    color: var(--fg-0-80);
+    font-size: small;
+    overflow-x: auto;
+    padding: var(--default-gap-xxsmall);
+    text-align: initial;
+    text-overflow: ellipsis; 
+    }
+#theURL.collapsed > #parsed {
+    display: none;
+    }
+#parsed ul, #parsed li {
+    list-style-type: none;
+    }
+#parsed li {
+    white-space: nowrap;
+    }
+#parsed span {
+    display: inline-block;
+    }
+#parsed span:first-of-type {
+    font-weight: bold;
+    }
+#whyex a {
+    white-space: nowrap;
+}
+#proceed {
+    margin-bottom: var(--default-gap);
+    }
+:root.mobile .proceedButtons {
+    justify-content: center;
+    display: flex;
+    flex-direction: column;
+    }
+.proceedButtons > button {
+    margin-inline-end: var(--default-gap);
+    margin-block-end: var(--default-gap-xsmall);
+    }
+
+.filterList:first-child .filterListSeparator {
+    display: none;
+    }
+.filterList .filterListSupport[href=""] {
+    display: none;
+    }
+
+/* Small-screen devices */
+:root.mobile button {
+    width: 100%;
+    }

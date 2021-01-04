@@ -1,32 +1,36 @@
-ul {
-    padding-left: 1em;
+body {
+    margin-bottom: 6rem;
     }
-ul#userSettings {
-    padding-left: 0;
+.synopsis {
+    font-size: 90%;
     }
-li {
-    margin-top: 0.25em;
-    }
-ul#userSettings,
-ul#userSettings ul {
-    list-style-type: none;
-    }
-ul#userSettings .subgroup {
-    margin-top: 1em;
-    }
-ul#userSettings .subgroup > span {
-    font-size: larger;
-    font-weight: bold;
-    }
-#advanced-user-enabled ~ a.fa {
+[href="advanced-settings.html"] {
     display: none;
     }
-body.advancedUser #advanced-user-enabled ~ a.fa {
-    display: inline;
+body.advancedUser [href="advanced-settings.html"] {
+    display: inline-flex;
     }
-#localData > ul > li {
-    margin-top: 1em;
+#localData > div {
+    margin-bottom: var(--default-gap-small);
     }
-#localData > ul > li > ul > li:nth-of-type(2) {
-    font-family: monospace;
+#localData > div:last-of-type {
+    align-items: flex-start;
+    display: flex;
+    flex-direction: column;
+    }
+#localData > div:last-of-type > button {
+    margin-bottom: var(--default-gap-small);
+    min-width: 280px;
+    }
+
+/* Mobile devices */
+
+:root.mobile #localData {
+    max-width: 100vw;
+    }
+:root.mobile #localData > div:last-of-type {
+    align-items: stretch;
+    }
+:root.mobile #localData > div:last-of-type > button {
+    min-width: unset;
     }

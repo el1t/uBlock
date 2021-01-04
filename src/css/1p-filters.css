@@ -1,14 +1,23 @@
-div > p:first-child {
-    margin-top: 0;
+html {
+    height: 100vh;
+    overflow: hidden;
+    width: 100vw;
     }
-div > p:last-child {
-    margin-bottom: 0;
-    }
-.userFilters {
-    box-sizing: border-box;
-    height: 60vh;
-    text-align: left;
-    white-space: pre;
+body {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    justify-content: stretch;
+    overflow: hidden;
     width: 100%;
+    }
+.body {
+    flex-shrink: 0;
+    }
+.codeMirrorContainer {
+    flex-grow: 1;
+    }
+#userFilters {
+    text-align: left;
     word-wrap: normal;
     }
